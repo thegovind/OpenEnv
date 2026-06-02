@@ -1,0 +1,80 @@
+# TEMPORARY workflow — DELETE before merge.
+#
+# Why this exists: the real preview comment is posted by
+# `upload_pr_documentation.yml`, which uses a `workflow_run` trigger. GitHub only
+# fires `workflow_run` workflows from the default branch (main). Since this PR is
+# the one that *introduces* the doc-builder workflows, they aren't on main yet, so
+# no preview is synced to the bucket and moon-ci-docs returns 404.
+#
+# This standalone workflow runs on `pull_request` (which executes from the PR
+# branch), builds the docs, and syncs them to the same bucket the real upload
+# workflow uses — so the preview becomes reachable at:
+#   https://moon-ci-docs.huggingface.co/docs/openenv/pr_739/en/index
+#
+# Once this PR is merged, the permanent workflows take over. DELETE this file.
+name: TEMP PR Docs Preview
+
+on:
+  pull_request:
+
+concurrency:
+  group: temp-pr-docs-preview-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-sync:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: huggingface/doc-builder
+          ref: 2430c1ec91d04667414e2fa31ecfc36c153ea391
+          path: doc-builder
+
+      - uses: actions/checkout@v4
+        with:
+          path: openenv
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install uv and create venv
+        run: |
+          pip install -U uv
+          uv venv
+
+      - name: Install doc-builder and openenv
+        run: |
+          source .venv/bin/activate
+          uv pip install ./doc-builder
+          uv pip install ./openenv[all]
+
+      - name: Build docs
+        env:
+          NODE_OPTIONS: --max-old-space-size=6656
+        run: |
+          source .venv/bin/activate
+          mkdir -p build_dir
+          cd doc-builder
+          doc-builder build openenv ../openenv/docs/source \
+            --build_dir ../build_dir --clean \
+            --version pr_${{ github.event.number }} --html \
+            --repo_owner huggingface --repo_name openenv --version_tag_suffix=""
+          cd ..
+
+      - name: Sync preview to bucket
+        env:
+          HF_TOKEN: ${{ secrets.HF_DOC_BUILD_PUSH }}
+        run: |
+          source .venv/bin/activate
+          uv pip install -U huggingface_hub
+          cd build_dir
+          hf sync ./openenv "hf://buckets/hf-doc-build/doc-dev/openenv"
+
+      - name: Print preview URL
+        run: |
+          echo "Preview: https://moon-ci-docs.huggingface.co/docs/openenv/pr_${{ github.event.number }}/en/index"
