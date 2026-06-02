@@ -38,7 +38,7 @@ bookkeeping. An OpenEnv environment gives you all three out of the box:
 | **Teacher model** | `gpt-5-mini` via the OpenAI API |
 | **Environment** | [`reasoning_gym_env`](https://github.com/huggingface/OpenEnv/tree/main/envs/reasoning_gym_env) / `chain_sum` |
 | **SFT trainer** | [TRL `SFTTrainer`](https://huggingface.co/docs/trl/main/en/sft_trainer) |
-| **Next step** | [End-to-end walkthrough with GRPO](https://huggingface.github.io/OpenEnv/tutorials/end-to-end-walkthrough.html) |
+| **Next step** | [End-to-end walkthrough with GRPO](end-to-end-walkthrough) |
 
 ---
 
@@ -80,7 +80,7 @@ assert YOUR_HF_USERNAME != "your-username", "Replace YOUR_HF_USERNAME with your 
 
 ## 3. Define the system prompt
 
-Use the same prompt as the [GRPO tutorial](https://huggingface.github.io/OpenEnv/tutorials/end-to-end-walkthrough.html)
+Use the same prompt as the [GRPO tutorial](end-to-end-walkthrough)
 so the SFT-trained model is a drop-in replacement when you continue with GRPO.
 
 ```python
@@ -401,7 +401,7 @@ environment's scorer to award any credit.
 ## 11. Where to go next: GRPO
 
 The SFT checkpoint is ready to use as the starting model for GRPO. In the
-[end-to-end walkthrough](https://huggingface.github.io/OpenEnv/tutorials/end-to-end-walkthrough.html),
+[end-to-end walkthrough](end-to-end-walkthrough),
 change one line in section 8:
 
 ```python

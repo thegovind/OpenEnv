@@ -274,9 +274,9 @@ def my_env_solver(base_url: str):
 
 ## Next steps
 
-- [End-to-end walkthrough](https://huggingface.github.io/OpenEnv/tutorials/end-to-end-walkthrough.html) — full GRPO training loop that produces a model you can evaluate with this tutorial
-- [SFT warm-up tutorial](https://huggingface.github.io/OpenEnv/tutorials/sft-warmup.html) — collect rollouts, filter by reward, and fine-tune a student model before running GRPO
-- [Rubrics tutorial](https://huggingface.github.io/OpenEnv/tutorials/rubrics.html) — define reward functions inside
+- [End-to-end walkthrough](end-to-end-walkthrough) — full GRPO training loop that produces a model you can evaluate with this tutorial
+- [SFT warm-up tutorial](sft-warmup) — collect rollouts, filter by reward, and fine-tune a student model before running GRPO
+- [Rubrics tutorial](rubrics) — define reward functions inside
   the environment using composable rubrics
 - [Inspect AI documentation](https://inspect.aisi.org.uk/) — full reference
   for tasks, solvers, scorers, and the log viewer
