@@ -14,11 +14,3 @@ Complete reference documentation for OpenEnv APIs, CLI, and configuration.
 Additional reference documentation for `openenv.yaml` manifest format and environment variables is in development.
 ```
 
-```{toctree}
-:hidden:
-:maxdepth: 1
-
-core
-cli
-auto_discovery
-```
