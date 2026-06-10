@@ -379,3 +379,54 @@ RUN pip install --no-cache-dir \
     pandas==2.0.0 \
     your-custom-package==1.0.0
 ```
+
+## Contributing a New Environment: Pre-Submit Checklist
+
+Use this checklist before opening a PR that adds an environment. It mirrors the
+canonical `echo_env` layout and the validation gates an environment must pass.
+
+### Files (match `envs/echo_env/`)
+
+```
+envs/<my_env>/
+  __init__.py            # re-export the client + public types
+  client.py              # EnvClient / MCPToolClient subclass
+  openenv.yaml           # Space manifest (spec_version, runtime, app, port)
+  pyproject.toml         # package metadata + dependencies
+  README.md              # what it is, tools, reward, run instructions
+  server/
+    __init__.py
+    app.py               # FastAPI app (HTTPEnvServer / MCPEnvironment)
+    <my>_environment.py  # reset / step / state (or FastMCP tools)
+    Dockerfile           # FROM the openenv base image
+```
+
+### Contract
+
+- [ ] Environment implements `reset()`, `step()`, and `state()` (or exposes
+      FastMCP tools via `MCPEnvironment`).
+- [ ] `Action` / `Observation` / `State` are typed models.
+- [ ] Reward, when present, lives in the environment and is returned on
+      `Observation.reward` / the tool result. Do not compute reward outside the
+      environment.
+- [ ] Tool names avoid the reserved set: `reset`, `step`, `state`, `close`.
+
+### Validation gates (the environment must run before it can train)
+
+- [ ] **Manifest** parses: `openenv.yaml` has `spec_version`, `runtime`, `app`,
+      `port`.
+- [ ] **Image** builds: `docker build -t <my_env> envs/<my_env>/server`.
+- [ ] **API** responds: a client `reset()` / `step()` / `state()` round-trips
+      against the running container.
+- [ ] **MCP** (if applicable): `tools/list` and `tools/call` succeed.
+- [ ] **Parity**: the same environment behaves consistently in simulation
+      (train/eval) and production modes.
+
+### Quality
+
+- [ ] A `README.md` documents the task, tools, reward, and a run command.
+- [ ] Tests under `tests/envs/` (see existing env tests) cover the core flow.
+- [ ] `uv run ruff format src/ tests/` and
+      `PYTHONPATH=src:envs uv run pytest tests/ -v` pass.
+- [ ] An example under `examples/` (optional but encouraged) shows end-to-end
+      usage; add it to `examples/README.md`.
