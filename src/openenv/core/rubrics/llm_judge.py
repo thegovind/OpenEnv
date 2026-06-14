@@ -27,6 +27,7 @@ from typing import Any, Dict
 
 from openenv.core.llm_client import LLMClient
 from openenv.core.rubrics.base import Rubric
+from openenv.core.rubrics.result import RubricOutput, RubricResult
 
 
 class LLMJudge(Rubric):
@@ -47,6 +48,11 @@ class LLMJudge(Rubric):
             Score returned when parsing fails.
         normalize (`bool`, *optional*, defaults to `True`):
             If True, clamp extracted score to [0, 1].
+        return_feedback (`bool`, *optional*, defaults to `False`):
+            If True, ``forward()`` returns a `RubricResult` carrying both the
+            parsed reward and the LLM's full response as ``feedback`` (the
+            judge's written rationale). If False, returns a bare ``float`` —
+            backward compatible with the original behavior.
     """
 
     def __init__(
@@ -57,6 +63,7 @@ class LLMJudge(Rubric):
         score_pattern: str | None = None,
         default_score: float = 0.0,
         normalize: bool = True,
+        return_feedback: bool = False,
     ):
         super().__init__()
         self.prompt_template = prompt_template
@@ -64,8 +71,9 @@ class LLMJudge(Rubric):
         self._score_pattern = re.compile(score_pattern or r"(\d+\.?\d*)")
         self.default_score = default_score
         self.normalize = normalize
+        self.return_feedback = return_feedback
 
-    async def forward(self, action: Any, observation: Any) -> float:
+    async def forward(self, action: Any, observation: Any) -> RubricOutput:
         """Evaluate by sending a prompt to the LLM and parsing the score.
 
         Args:
@@ -73,11 +81,20 @@ class LLMJudge(Rubric):
             observation: The resulting observation.
 
         Returns:
-            `float`: Parsed score from the LLM response.
+            `float` | `RubricResult`: The parsed score. When
+            ``return_feedback=True``, a `RubricResult` whose ``feedback`` is the
+            LLM's full response (its rationale); otherwise a bare ``float``.
         """
         prompt = self._render_prompt(action, observation)
         response = await self._client.complete(prompt)
-        return self._parse_score(response)
+        score = self._parse_score(response)
+        if self.return_feedback:
+            return RubricResult(
+                reward=score,
+                feedback=response,
+                metadata={"grader": "llm_judge"},
+            )
+        return score
 
     def _render_prompt(self, action: Any, observation: Any) -> str:
         """Format the prompt template with action and observation.
@@ -112,6 +129,7 @@ class LLMJudge(Rubric):
             "score_pattern": self._score_pattern.pattern,
             "default_score": self.default_score,
             "normalize": self.normalize,
+            "return_feedback": self.return_feedback,
         }
 
     def load_state_dict(self, state: Dict[str, Any]) -> None:
@@ -124,3 +142,5 @@ class LLMJudge(Rubric):
             self.default_score = state["default_score"]
         if "normalize" in state:
             self.normalize = state["normalize"]
+        if "return_feedback" in state:
+            self.return_feedback = state["return_feedback"]

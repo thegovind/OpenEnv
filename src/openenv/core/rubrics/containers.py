@@ -17,6 +17,7 @@ import inspect
 from typing import Any, Dict, Iterator, List, Mapping, Tuple, Union
 
 from openenv.core.rubrics.base import Rubric
+from openenv.core.rubrics.result import reward_value
 
 
 def _in_async_context() -> bool:
@@ -62,7 +63,7 @@ class Sequential(Rubric):
         """Run rubrics in order, return 0 if any returns 0. Sync version."""
         result = 1.0
         for rubric in self._rubric_list:
-            score = rubric(action, observation)
+            score = reward_value(rubric(action, observation))
             if score == 0.0:
                 return 0.0
             result = score
@@ -91,6 +92,7 @@ class Sequential(Rubric):
             return self._call_async_detected(action, observation, first_result)
         else:
             # Continue with sync path
+            first_result = reward_value(first_result)
             if first_result == 0.0:
                 # Pre-hooks
                 for hook in self._forward_pre_hooks:
@@ -113,6 +115,7 @@ class Sequential(Rubric):
                         score,
                         self._rubric_list[i + 1 :],
                     )
+                score = reward_value(score)
                 if score == 0.0:
                     # Pre-hooks
                     for hook in self._forward_pre_hooks:
@@ -178,7 +181,7 @@ class Sequential(Rubric):
             else:
                 hook(self, action, observation)
 
-        result = await first_coro
+        result = reward_value(await first_coro)
         if result == 0.0:
             self.last_score = 0.0
             for hook in self._forward_hooks:
@@ -192,6 +195,7 @@ class Sequential(Rubric):
             score = rubric(action, observation)
             if inspect.iscoroutine(score):
                 score = await score
+            score = reward_value(score)
             if score == 0.0:
                 self.last_score = 0.0
                 for hook in self._forward_hooks:
@@ -221,7 +225,7 @@ class Sequential(Rubric):
                 hook(self, action, observation)
 
         # Await the first async rubric (already called)
-        result = await first_async_coro
+        result = reward_value(await first_async_coro)
         if result == 0.0:
             self.last_score = 0.0
             for hook in self._forward_hooks:
@@ -236,6 +240,7 @@ class Sequential(Rubric):
             score = rubric(action, observation)
             if inspect.iscoroutine(score):
                 score = await score
+            score = reward_value(score)
             if score == 0.0:
                 self.last_score = 0.0
                 for hook in self._forward_hooks:
@@ -289,7 +294,7 @@ class Gate(Rubric):
 
     def forward(self, action: Any, observation: Any) -> float:
         """Return child score if >= threshold, else 0. Sync version."""
-        score = self.rubric(action, observation)
+        score = reward_value(self.rubric(action, observation))
         if score < self.threshold:
             return 0.0
         return score
@@ -304,6 +309,7 @@ class Gate(Rubric):
             return self._call_async(action, observation, score)
         else:
             # Child is sync
+            score = reward_value(score)
             # Pre-hooks
             for hook in self._forward_pre_hooks:
                 hook(self, action, observation)
@@ -321,7 +327,7 @@ class Gate(Rubric):
             else:
                 hook(self, action, observation)
 
-        score = await score_coro
+        score = reward_value(await score_coro)
         result = 0.0 if score < self.threshold else score
         self.last_score = result
 
@@ -378,7 +384,7 @@ class WeightedSum(Rubric):
         """Return weighted sum of child scores. Sync version."""
         total = 0.0
         for rubric, weight in zip(self._rubric_list, self._weights):
-            score = rubric(action, observation)
+            score = reward_value(rubric(action, observation))
             total += score * weight
         return total
 
@@ -400,7 +406,7 @@ class WeightedSum(Rubric):
                 hook(self, action, observation)
             total = 0.0
             for score, weight in zip(results, self._weights):
-                total += score * weight
+                total += reward_value(score) * weight
             self.last_score = total
             for hook in self._forward_hooks:
                 hook(self, action, observation, total)
@@ -435,7 +441,7 @@ class WeightedSum(Rubric):
         # Compute weighted sum
         total = 0.0
         for score, weight in zip(scores, self._weights):
-            total += score * weight
+            total += reward_value(score) * weight
 
         self.last_score = total
 
