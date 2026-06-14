@@ -13,9 +13,11 @@ from .providers import (
     LocalDockerProvider,
     RuntimeProvider,
 )
+from .aca_provider import ACASandboxProvider
 from .uv_provider import UVProvider
 
 __all__ = [
+    "ACASandboxProvider",
     "ContainerProvider",
     "DockerSwarmProvider",
     "LocalDockerProvider",
