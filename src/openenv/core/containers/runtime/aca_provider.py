@@ -14,8 +14,6 @@ import time
 import warnings
 from typing import Any, Dict, Literal, Optional
 
-import requests
-
 from .providers import ContainerProvider
 
 
@@ -451,20 +449,28 @@ class ACASandboxProvider(ContainerProvider):
         # before it is ever surfaced in an error (security invariant S4).
         self._redact_values = {value for value in (env_vars or {}).values() if value}
 
-        self._sandbox = self._adapter.create_sandbox(
-            disk=disk,
-            disk_id=disk_id,
-            env_vars=dict(env_vars or {}) if env_vars else None,
-            labels=labels or None,
-            egress_policy=egress_policy,
-            cpu=self.cpu,
-            memory=self.memory,
-            disk_size=self.disk_size,
-            auto_suspend_seconds=self.auto_suspend_seconds,
-            auto_suspend_mode=self.auto_suspend_mode,
-            create_timeout=self.create_timeout,
-            polling_interval=self.polling_interval,
-        )
+        # Two-stage cleanup. A create failure created nothing, so just drop the
+        # recorded secrets and re-raise (notably it must NOT delete a sandbox
+        # this call did not create — e.g. one left over on the provider). Only a
+        # failure AFTER the sandbox exists runs stop_container() to delete it.
+        try:
+            self._sandbox = self._adapter.create_sandbox(
+                disk=disk,
+                disk_id=disk_id,
+                env_vars=dict(env_vars or {}) if env_vars else None,
+                labels=labels or None,
+                egress_policy=egress_policy,
+                cpu=self.cpu,
+                memory=self.memory,
+                disk_size=self.disk_size,
+                auto_suspend_seconds=self.auto_suspend_seconds,
+                auto_suspend_mode=self.auto_suspend_mode,
+                create_timeout=self.create_timeout,
+                polling_interval=self.polling_interval,
+            )
+        except Exception:
+            self._redact_values = set()
+            raise
 
         try:
             if cmd:
@@ -566,6 +572,10 @@ class ACASandboxProvider(ContainerProvider):
         server process dies during startup this raises `RuntimeError` (sandbox
         output is withheld unless `surface_server_logs=True`; see RFC 002 S4).
         """
+        # Imported lazily inside the method that needs it, matching the other
+        # providers in this package (e.g. DaytonaProvider).
+        import requests
+
         deadline = time.time() + timeout_s
         health_url = f"{base_url}/health"
 

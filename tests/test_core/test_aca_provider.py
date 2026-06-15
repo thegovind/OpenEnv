@@ -145,12 +145,17 @@ def test_empty_sources_raise_clear_errors(adapter):
         provider.start_container("disk-id:")
 
 
-def test_plain_image_is_treated_as_public_disk(adapter):
+@pytest.mark.parametrize("disk_name", ["ubuntu", "python-3.11"])
+def test_plain_image_is_treated_as_public_disk(disk_name):
+    # "ubuntu" and "python-3.11" (the disk name the live ACA demo uses) are bare
+    # public disk names — hyphens/dots are fine; only "/" or ":" are rejected.
+    # A fresh provider per disk (no start_container re-use).
+    adapter = _FakeAdapter()
     provider = _provider(adapter)
 
-    provider.start_container("ubuntu")
+    provider.start_container(disk_name)
 
-    assert adapter.created[0]["disk"] == "ubuntu"
+    assert adapter.created[0]["disk"] == disk_name
 
 
 def test_docker_image_reference_is_rejected(adapter):
@@ -308,9 +313,9 @@ def test_stop_container_clears_redact_values(adapter):
     assert provider._redact_values == set()
 
 
-def test_failed_create_then_stop_clears_redact_values(adapter):
-    """If create_sandbox raises after env_vars are recorded, an explicit
-    stop_container (which has no sandbox handle) still drops the secret values."""
+def test_failed_create_auto_clears_redact_values(adapter):
+    """create_sandbox failure must AUTO-clear injected secret values: the create
+    stage drops them on failure, so no caller action is required."""
 
     def boom(**kwargs):
         raise RuntimeError("create failed")
@@ -321,10 +326,29 @@ def test_failed_create_then_stop_clears_redact_values(adapter):
     with pytest.raises(RuntimeError, match="create failed"):
         provider.start_container("ubuntu", env_vars={"TOKEN": "secret-123"})
 
-    # create_sandbox is outside start_container's cleanup try, so the secret
-    # values are still recorded here — but stop_container must drop them.
-    assert provider._redact_values == {"secret-123"}
-    provider.stop_container()
+    assert provider._redact_values == set()
+    # A create failure created nothing, so nothing was deleted.
+    assert adapter.deleted == []
+
+
+def test_failed_restart_create_does_not_delete_existing_sandbox(adapter):
+    """If a provider already has an active sandbox and a *second* start fails at
+    create_sandbox, the existing sandbox must NOT be deleted."""
+    provider = _provider(adapter)
+    provider.start_container("ubuntu")
+    first_sandbox = provider._sandbox
+    first_url = provider._base_url
+
+    def boom(**kwargs):
+        raise RuntimeError("create failed")
+
+    adapter.create_sandbox = boom
+    with pytest.raises(RuntimeError, match="create failed"):
+        provider.start_container("python-3.11", env_vars={"TOKEN": "secret-123"})
+
+    assert adapter.deleted == []  # the first sandbox was left intact
+    assert provider._sandbox is first_sandbox
+    assert provider._base_url == first_url
     assert provider._redact_values == set()
 
 
