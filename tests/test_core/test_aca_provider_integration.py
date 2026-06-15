@@ -109,10 +109,11 @@ def _bootstrap_cmd() -> str:
 
 @pytest.mark.integration
 @pytest.mark.network
+@pytest.mark.skipif(
+    os.environ.get("OPENENV_ACA_INTEGRATION") != "1",
+    reason="Set OPENENV_ACA_INTEGRATION=1 to run the real ACA smoke test",
+)
 async def test_aca_provider_real_sandbox_smoke():
-    if os.environ.get("OPENENV_ACA_INTEGRATION") != "1":
-        pytest.skip("Set OPENENV_ACA_INTEGRATION=1 to run the real ACA smoke test")
-
     disk = os.environ.get("OPENENV_ACA_DISK")
     if not disk:
         pytest.skip("Set OPENENV_ACA_DISK to an ACA disk image that runs OpenEnv")

@@ -221,6 +221,21 @@ def _source_from_image(image: str) -> tuple[str | None, str | None]:
             raise ValueError("disk-id: source must include a disk image id")
         return None, disk_id
 
+    # A bare string is treated as a public disk-image name. Guard the common
+    # migration foot-gun: an ACA sandbox source is NOT a Docker/OCI registry
+    # image, so a value that looks like one (a registry path with "/", or an
+    # "image:tag") is almost certainly a mistake and would otherwise surface as
+    # an opaque ACA SDK error. Fail fast with guidance instead.
+    if "/" in image or ":" in image:
+        raise ValueError(
+            f"{image!r} looks like a container/OCI image reference, but "
+            "ACASandboxProvider sources are Azure Container Apps sandbox disks, "
+            "not Docker registry images. Use a bare public disk name, "
+            "'disk:<name>' for a public disk image, or 'disk-id:<id>' for a "
+            "private one (building a disk image from a container image is a "
+            "separate, out-of-band ACA step)."
+        )
+
     return image, None
 
 
@@ -255,6 +270,20 @@ class ACASandboxProvider(ContainerProvider):
     Validated end to end against a live ACA sandbox group; the underlying
     `azure-containerapps-sandbox` SDK is preview, so pin it and re-validate
     after upgrades (see `tests/test_core/test_aca_provider_integration.py`).
+
+    `close()` stops the active sandbox *and* releases the underlying SDK client,
+    so prefer using the provider as a context manager (or call `close()`
+    explicitly) for deterministic cleanup. Note that `ContainerProvider` has no
+    `close()`, so a caller holding a bare `ContainerProvider` reference should
+    keep the concrete `ACASandboxProvider` (or its context manager) to release
+    the client.
+
+    ```python
+    with ACASandboxProvider(anonymous_port=True, ...) as provider:
+        base_url = provider.start_container("disk:my-env", cmd=...)
+        ...
+    # sandbox deleted and SDK client closed on exit
+    ```
     """
 
     def __init__(
@@ -273,7 +302,7 @@ class ACASandboxProvider(ContainerProvider):
         auto_suspend_mode: Literal["Memory", "Disk"] = "Memory",
         labels: Optional[Dict[str, str]] = None,
         egress_policy: Any = None,
-        anonymous_port: Optional[bool] = None,
+        anonymous_port: Literal[True] | None = None,
         cmd: Optional[str] = None,
         working_directory: Optional[str] = None,
         surface_server_logs: bool = False,
@@ -374,9 +403,11 @@ class ACASandboxProvider(ContainerProvider):
     ) -> str:
         """Start an OpenEnv server in an ACA sandbox and return its base URL.
 
-        `image` is an ACA sandbox source: a plain string or `disk:<name>` for a
-        public disk image, or `disk-id:<id>` for a private one. Only port 8000
-        is supported. `**kwargs` accepts per-start overrides (`cmd`, `labels`,
+        `image` is an ACA sandbox *source*, not a Docker/OCI registry image: a
+        bare string or `disk:<name>` for a public disk image, or `disk-id:<id>`
+        for a private one. A value that looks like a container image (a registry
+        path or `name:tag`) is rejected with guidance. Only port 8000 is
+        supported. `**kwargs` accepts per-start overrides (`cmd`, `labels`,
         `egress_policy`, `anonymous_port`); unknown options raise `ValueError`
         so typos cannot silently change sandbox behavior.
         """
@@ -458,6 +489,13 @@ class ACASandboxProvider(ContainerProvider):
         else:
             command = cmd
         escaped = shlex.quote(command)
+        # The adapter's `exec` maps to the ACA SDK's `executeShellCommand`
+        # endpoint, which runs its argument through a POSIX shell in the sandbox
+        # (the SDK docstring says "Execute a shell command" and tells callers to
+        # `shlex.quote()` interpolated input). That shell is what makes the
+        # backgrounding (`&`), output redirection, and `$!` PID capture below
+        # work; if a future preview SDK changes `exec` to bypass the shell, this
+        # start sequence must be revisited (re-validate via the integration test).
         self._adapter.exec(
             self._sandbox,
             f"nohup bash -c {escaped} > /tmp/openenv-server.log 2>&1 & "
@@ -580,6 +618,12 @@ class ACASandboxProvider(ContainerProvider):
         self.stop_container()
         if self._owns_adapter:
             self._adapter.close()
+
+    def __enter__(self) -> "ACASandboxProvider":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()
 
 
 __all__ = ["ACASandboxProvider"]

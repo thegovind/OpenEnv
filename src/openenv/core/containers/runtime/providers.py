@@ -54,7 +54,10 @@ class ContainerProvider(ABC):
 
         Args:
             image (`str`):
-                Container image name (e.g., `"echo-env:latest"`).
+                Provider-specific container *source* identifier. For
+                container-based providers this is a registry image name (e.g.
+                `"echo-env:latest"`); other providers may map it to a
+                provider-specific source (see the provider's documentation).
             port (`int`, *optional*):
                 Port to expose. If `None`, the provider chooses.
             env_vars (`dict`, *optional*):

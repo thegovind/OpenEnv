@@ -141,6 +141,22 @@ def test_plain_image_is_treated_as_public_disk(adapter):
     assert adapter.created[0]["disk"] == "ubuntu"
 
 
+def test_docker_image_reference_is_rejected(adapter):
+    """A migration foot-gun: an OCI/Docker image string must fail with guidance,
+    not be silently passed to the ACA SDK as a disk name."""
+    provider = _provider(adapter)
+
+    for bad in (
+        "myregistry.azurecr.io/echo-env:latest",  # registry path + tag
+        "echo-env:latest",  # bare image:tag
+        "library/ubuntu",  # repo path
+    ):
+        with pytest.raises(ValueError, match="container/OCI image reference"):
+            provider.start_container(bad)
+
+    assert adapter.created == []  # never reached the SDK
+
+
 def test_disk_id_source(adapter):
     provider = _provider(adapter)
 
@@ -286,6 +302,36 @@ def test_adapter_owned_close_closes_adapter():
 
     provider.close()
 
+    assert adapter.closed is True
+
+
+def test_context_manager_closes_provider():
+    """Using the provider as a context manager stops the sandbox and releases
+    the owned SDK client on exit (deterministic cleanup)."""
+    adapter = _FakeAdapter()
+    with ACASandboxProvider(
+        _adapter=adapter, anonymous_port=True, egress_policy=_SAFE_EGRESS
+    ) as provider:
+        provider._owns_adapter = True
+        provider.start_container("ubuntu")
+
+    assert adapter.deleted == [adapter.sandbox]
+    assert adapter.closed is True
+
+
+def test_context_manager_closes_on_exception():
+    """The point of the context manager: cleanup still happens if the `with`
+    body raises."""
+    adapter = _FakeAdapter()
+    with pytest.raises(RuntimeError, match="boom"):
+        with ACASandboxProvider(
+            _adapter=adapter, anonymous_port=True, egress_policy=_SAFE_EGRESS
+        ) as provider:
+            provider._owns_adapter = True
+            provider.start_container("ubuntu")
+            raise RuntimeError("boom")
+
+    assert adapter.deleted == [adapter.sandbox]
     assert adapter.closed is True
 
 
