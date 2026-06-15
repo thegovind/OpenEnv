@@ -7,9 +7,6 @@ import types
 from unittest.mock import MagicMock, patch
 
 import pytest
-from openenv.core.containers.runtime import (
-    ACASandboxProvider as ExportedACASandboxProvider,
-)
 from openenv.core.containers.runtime.aca_provider import (
     _DefaultACASandboxAdapter,
     ACASandboxProvider,
@@ -118,8 +115,23 @@ def test_start_container_creates_disk_sandbox_and_exposes_port(adapter):
     )
 
 
-def test_provider_is_exported_from_runtime_package():
-    assert ExportedACASandboxProvider is ACASandboxProvider
+def test_provider_imports_from_its_module():
+    # Optional cloud providers are imported from their module, not re-exported
+    # from the runtime package (matches DaytonaProvider).
+    from openenv.core.containers.runtime.aca_provider import (
+        ACASandboxProvider as ModuleACASandboxProvider,
+    )
+
+    assert ModuleACASandboxProvider is ACASandboxProvider
+
+
+def test_provider_not_in_runtime_package_all():
+    import openenv.core.containers.runtime as runtime_pkg
+
+    # Optional cloud providers are not surfaced at the package root (matches
+    # DaytonaProvider): neither in __all__ nor as an attribute.
+    assert "ACASandboxProvider" not in runtime_pkg.__all__
+    assert not hasattr(runtime_pkg, "ACASandboxProvider")
 
 
 def test_empty_sources_raise_clear_errors(adapter):
@@ -233,7 +245,7 @@ def test_wait_for_ready_reports_dead_server_log(adapter):
 
 
 def test_crash_log_not_surfaced_by_default(adapter):
-    """S6: server output is not surfaced in the crash error by default."""
+    """S4: server output is not surfaced in the crash error by default."""
     adapter.dead_process = True
     adapter.log = "TOKEN=topsecret crashed"
     provider = _provider(adapter, cmd="python -m broken")  # surface_server_logs=False
@@ -250,7 +262,7 @@ def test_crash_log_not_surfaced_by_default(adapter):
 
 
 def test_non_https_error_does_not_leak_url(adapter):
-    """S3: the bearer port URL is never interpolated into the error."""
+    """S2: the bearer port URL is never interpolated into the error."""
     adapter.port_url = "http://secret-bearer-host.example/abc123"
     provider = _provider(adapter)
 
@@ -262,7 +274,7 @@ def test_non_https_error_does_not_leak_url(adapter):
 
 
 def test_timeout_error_does_not_leak_url(adapter):
-    """S3: the timeout error does not interpolate the bearer URL."""
+    """S2: the timeout error does not interpolate the bearer URL."""
     provider = _provider(adapter)  # no cmd -> no dead-process check
     url = provider.start_container("ubuntu")
 
@@ -278,11 +290,42 @@ def test_timeout_error_does_not_leak_url(adapter):
 
 
 def test_start_time_anonymous_port_false_is_rejected(adapter):
-    """S1/S3: a start-time anonymous_port=False override is rejected."""
+    """S2: a start-time anonymous_port=False override is rejected."""
     provider = _provider(adapter)
 
     with pytest.raises(ValueError, match="authenticated ACA sandbox ports"):
         provider.start_container("ubuntu", anonymous_port=False)
+
+
+def test_stop_container_clears_redact_values(adapter):
+    """Stale injected secret values must not survive across sandboxes."""
+    provider = _provider(adapter)
+    provider.start_container("ubuntu", env_vars={"TOKEN": "secret-123"})
+    assert provider._redact_values == {"secret-123"}
+
+    provider.stop_container()
+
+    assert provider._redact_values == set()
+
+
+def test_failed_create_then_stop_clears_redact_values(adapter):
+    """If create_sandbox raises after env_vars are recorded, an explicit
+    stop_container (which has no sandbox handle) still drops the secret values."""
+
+    def boom(**kwargs):
+        raise RuntimeError("create failed")
+
+    adapter.create_sandbox = boom
+    provider = _provider(adapter)
+
+    with pytest.raises(RuntimeError, match="create failed"):
+        provider.start_container("ubuntu", env_vars={"TOKEN": "secret-123"})
+
+    # create_sandbox is outside start_container's cleanup try, so the secret
+    # values are still recorded here — but stop_container must drop them.
+    assert provider._redact_values == {"secret-123"}
+    provider.stop_container()
+    assert provider._redact_values == set()
 
 
 def test_close_deletes_sandbox(adapter):
@@ -508,7 +551,7 @@ def test_default_adapter_matches_preview_sdk_shape(monkeypatch):
 
 
 def test_rejects_non_https_url(adapter):
-    """S2: a plaintext port URL must be refused (EnvClient would use ws://)."""
+    """S1: a plaintext port URL must be refused (EnvClient would use ws://)."""
     adapter.port_url = "http://insecure.example"
     provider = _provider(adapter)
 
@@ -520,7 +563,7 @@ def test_rejects_non_https_url(adapter):
 
 
 def test_warns_on_unrestricted_egress(adapter):
-    """S4: starting with no egress policy warns (ACA default is Allow)."""
+    """S3: starting with no egress policy warns (ACA default is Allow)."""
     provider = ACASandboxProvider(_adapter=adapter, anonymous_port=True)
 
     with pytest.warns(UserWarning, match="unrestricted egress"):
@@ -566,7 +609,7 @@ def test_deny_all_egress_builds_default_deny_policy(monkeypatch):
 
 
 def test_wait_for_ready_redacts_injected_secrets(adapter):
-    """S6: injected secret values are scrubbed from surfaced server output."""
+    """S4: injected secret values are scrubbed from surfaced server output."""
     adapter.dead_process = True
     adapter.log = "Traceback: TOKEN=supersecret123 failed to load config"
     provider = _provider(adapter, cmd="python -m server", surface_server_logs=True)

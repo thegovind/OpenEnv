@@ -13,11 +13,14 @@ from .providers import (
     LocalDockerProvider,
     RuntimeProvider,
 )
-from .aca_provider import ACASandboxProvider
 from .uv_provider import UVProvider
 
+# Note: optional cloud providers that require extra SDKs (e.g.
+# `ACASandboxProvider`, `DaytonaProvider`) are intentionally NOT re-exported
+# here. Import them from their module, e.g.
+# `from openenv.core.containers.runtime.aca_provider import ACASandboxProvider`.
+
 __all__ = [
-    "ACASandboxProvider",
     "ContainerProvider",
     "DockerSwarmProvider",
     "LocalDockerProvider",

@@ -8,7 +8,7 @@
 
 ## Amendment History
 
-**June 14, 2026**: Added the "Cloud Sandbox Providers" subsection — a provider-neutral capability mapping, protocol invariants, and security invariants for adapting hosted sandbox runtimes onto the existing `ContainerProvider` contract without changing the client/server protocol.
+**June 14, 2026** (proposed by @thegovind — pending review/sign-off by the RFC 002 authors): Added the "Cloud Sandbox Providers" subsection — a provider-neutral capability mapping, protocol invariants, and security invariants for adapting hosted sandbox runtimes onto the existing `ContainerProvider` contract without changing the client/server protocol.
 
 **November 12, 2025**: Added tool duality (sim vs prod), Docker Compose patterns, positioning framework (OpenEnv vs systems built on top), and graceful degradation principles.
 
@@ -144,6 +144,10 @@ class ContainerProvider(ABC):
 - Higher level RL frameworks can implement their own container providers to integrate with their existing orchestration solutions.
 
 #### Cloud Sandbox Providers
+
+> **Status:** proposed amendment, pending review/sign-off by the RFC 002 authors.
+> The normative invariants below (protocol + security) are not finalized until
+> the original authors approve.
 
 Cloud sandbox platforms expose the same small set of capabilities under
 different names. A cloud sandbox provider is an adapter that maps those

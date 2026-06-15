@@ -29,12 +29,12 @@ _VALID_SUSPEND_MODES = {"Memory", "Disk"}
 
 
 def _require_secure_url(url: str) -> str:
-    """Enforce https/wss transport (RFC 002 security invariant S2).
+    """Enforce https/wss transport (RFC 002 security invariant S1).
 
     `EnvClient` derives its WebSocket URL from this base URL, so a plaintext
     URL would become a cleartext `ws://` connection. The offending URL is
     deliberately omitted from the error because an anonymous ACA port URL is a
-    bearer capability (S3) that must not leak into logs.
+    bearer capability (S2) that must not leak into logs.
     """
     if not isinstance(url, str) or not url.lower().startswith("https://"):
         raise RuntimeError(
@@ -46,7 +46,7 @@ def _require_secure_url(url: str) -> str:
 
 
 def _validate_anonymous_port(anonymous_port: Optional[bool]) -> bool:
-    """Require explicit, public-only ingress opt-in (RFC 002 invariants S1/S3).
+    """Require explicit, public-only ingress opt-in (RFC 002 invariant S2).
 
     Public exposure is never implicit (`None` is rejected), and authenticated
     ACA ports are rejected because `EnvClient` has no WebSocket auth mechanism
@@ -263,9 +263,9 @@ class ACASandboxProvider(ContainerProvider):
 
     The environment runs untrusted code, so the provider is secure by default
     (RFC 002 security invariants): it requires explicit `anonymous_port=True`
-    ingress (S1/S3), enforces https/wss transport (S2), offers
-    `deny_all_egress()` to block the cloud metadata/IMDS endpoint (S4), and
-    never surfaces raw sandbox output unless `surface_server_logs=True` (S6).
+    ingress (S2), enforces https/wss transport (S1), offers
+    `deny_all_egress()` to block the cloud metadata/IMDS endpoint (S3), and
+    never surfaces raw sandbox output unless `surface_server_logs=True` (S4).
 
     Validated end to end against a live ACA sandbox group; the underlying
     `azure-containerapps-sandbox` SDK is preview, so pin it and re-validate
@@ -363,12 +363,12 @@ class ACASandboxProvider(ContainerProvider):
         self._port = _DEFAULT_ACA_PORT
         self._started_server = False
         # Injected env-var values, used to scrub captured server output before
-        # it is ever surfaced in an error (RFC 002 security invariant S6).
+        # it is ever surfaced in an error (RFC 002 security invariant S4).
         self._redact_values: set[str] = set()
 
     @staticmethod
     def deny_all_egress(allow: Optional[list[str]] = None) -> Any:
-        """Build a default-deny ACA `EgressPolicy` (RFC 002 security invariant S4).
+        """Build a default-deny ACA `EgressPolicy` (RFC 002 security invariant S3).
 
         Untrusted RL/agent code should not be able to exfiltrate data or reach
         the cloud metadata/IMDS endpoint. This returns an `EgressPolicy` whose
@@ -425,14 +425,14 @@ class ACASandboxProvider(ContainerProvider):
         egress_policy = kwargs.pop("egress_policy", self.egress_policy)
         anonymous_port = kwargs.pop("anonymous_port", self.anonymous_port)
         # Re-validate in case anonymous_port was overridden at start time: public
-        # exposure must stay an explicit, opt-in decision (S1/S3).
+        # exposure must stay an explicit, opt-in decision (S2).
         _validate_anonymous_port(anonymous_port)
 
         if kwargs:
             unknown = ", ".join(sorted(kwargs))
             raise ValueError(f"Unsupported ACASandboxProvider start options: {unknown}")
 
-        # Security (RFC 002 S4): the env server runs untrusted code and ACA's
+        # Security (RFC 002 S3): the env server runs untrusted code and ACA's
         # EgressPolicy defaults to default_action="Allow", so an unset policy
         # means unrestricted egress — the workload could exfiltrate data or
         # steal the sandbox managed-identity token from the cloud metadata
@@ -448,7 +448,7 @@ class ACASandboxProvider(ContainerProvider):
             )
 
         # Record injected secret values so captured server output can be scrubbed
-        # before it is ever surfaced in an error (security invariant S6).
+        # before it is ever surfaced in an error (security invariant S4).
         self._redact_values = {value for value in (env_vars or {}).values() if value}
 
         self._sandbox = self._adapter.create_sandbox(
@@ -484,6 +484,12 @@ class ACASandboxProvider(ContainerProvider):
         return self._base_url
 
     def _start_server(self, cmd: str) -> None:
+        # `cmd` is trusted orchestrator configuration, not agent/environment
+        # input — callers must not pass agent-controlled text as `cmd`, and any
+        # dynamic value interpolated into it must be quoted by the caller. Given
+        # that, running it through the subshell below is safe (RFC 002 amendment
+        # S5 — no command injection from untrusted sources). `working_directory`
+        # is still shlex-quoted defensively.
         if self.working_directory:
             command = f"cd {shlex.quote(self.working_directory)} && {cmd}"
         else:
@@ -508,7 +514,7 @@ class ACASandboxProvider(ContainerProvider):
 
         Replaces any injected env-var value with `***` and keeps only the tail.
         This is best-effort (exact-match only), which is why server output is
-        withheld entirely unless `surface_server_logs=True` (RFC 002 S6).
+        withheld entirely unless `surface_server_logs=True` (RFC 002 S4).
         """
         redacted = text or ""
         for value in self._redact_values:
@@ -518,7 +524,7 @@ class ACASandboxProvider(ContainerProvider):
         return redacted
 
     def _server_died_message(self) -> str:
-        """Build the startup-crash error, secure by default (RFC 002 S6).
+        """Build the startup-crash error, secure by default (RFC 002 S4).
 
         Untrusted code can print secrets then force a crash to exfiltrate them
         through the exception (which lands in orchestrator/CI logs), so sandbox
@@ -558,7 +564,7 @@ class ACASandboxProvider(ContainerProvider):
         ACA port proxies the `/ws` WebSocket upgrade `EnvClient` needs; the
         integration test covers the full `wss://` round-trip. If the captured
         server process dies during startup this raises `RuntimeError` (sandbox
-        output is withheld unless `surface_server_logs=True`; see RFC 002 S6).
+        output is withheld unless `surface_server_logs=True`; see RFC 002 S4).
         """
         deadline = time.time() + timeout_s
         health_url = f"{base_url}/health"
@@ -594,6 +600,9 @@ class ACASandboxProvider(ContainerProvider):
     def stop_container(self) -> None:
         """Delete the active ACA sandbox."""
         if self._sandbox is None:
+            # Still drop any injected secret values recorded by a failed start
+            # (e.g. create_sandbox raised before a sandbox handle existed).
+            self._redact_values = set()
             return
 
         try:
@@ -602,6 +611,9 @@ class ACASandboxProvider(ContainerProvider):
             self._sandbox = None
             self._base_url = None
             self._started_server = False
+            # Drop the previous episode's injected secret values; a new start
+            # repopulates them (avoids carrying stale values across sandboxes).
+            self._redact_values = set()
 
     @property
     def base_url(self) -> str:
