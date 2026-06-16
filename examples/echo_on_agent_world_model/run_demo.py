@@ -28,7 +28,6 @@ import json
 import pathlib
 
 import torch
-
 from awm import awm_episode_to_trajectory, live_capture
 from echo import echo_loss, tokenize_trajectory
 
@@ -65,7 +64,9 @@ class ToyLM(torch.nn.Module):
 def load_episode(args: argparse.Namespace) -> dict:
     episode = json.loads(FIXTURE.read_text())
     if args.live:
-        print(f"• live: replaying {len(episode['steps'])} tool calls against {args.live}")
+        print(
+            f"• live: replaying {len(episode['steps'])} tool calls against {args.live}"
+        )
         episode = live_capture(args.live, episode)
         print("• captured real observations from agent_world_model_env\n")
     return episode
@@ -88,8 +89,12 @@ def build_logits(tok: dict, args: argparse.Namespace):
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--hf", metavar="MODEL", help="HF model id for real tokenizer+logits")
-    ap.add_argument("--live", metavar="BASE_URL", help="capture from a running AWM server")
+    ap.add_argument(
+        "--hf", metavar="MODEL", help="HF model id for real tokenizer+logits"
+    )
+    ap.add_argument(
+        "--live", metavar="BASE_URL", help="capture from a running AWM server"
+    )
     ap.add_argument("--lam", type=float, default=0.05, help="ECHO world-model coeff λ")
     args = ap.parse_args()
 
@@ -112,14 +117,21 @@ def main() -> None:
     a = tok["action_mask"][1:]
     o = tok["obs_mask"][1:]
     w = tok["warning_mask"][1:]
-    ctx = (~a & ~o & ~w)
-    n_action, n_obs, n_warn, n_context = int(a.sum()), int(o.sum()), int(w.sum()), int(ctx.sum())
+    ctx = ~a & ~o & ~w
+    n_action, n_obs, n_warn, n_context = (
+        int(a.sum()),
+        int(o.sum()),
+        int(w.sum()),
+        int(ctx.sum()),
+    )
     learnable = n_action + n_obs
     pct_obs = 100.0 * n_obs / max(learnable, 1)
     ratio = n_obs / max(n_action, 1)
 
     print("=" * 64)
-    print(f"AWM scenario : {traj.meta.get('scenario')}  (task_idx {traj.meta.get('task_idx')})")
+    print(
+        f"AWM scenario : {traj.meta.get('scenario')}  (task_idx {traj.meta.get('task_idx')})"
+    )
     print(f"task         : {traj.task_prompt[:70]}...")
     print(f"steps        : {traj.meta.get('num_steps')}   reward: {traj.reward}")
     print("-" * 64)
@@ -129,33 +141,78 @@ def main() -> None:
     print(f"  env_output  {n_obs:5d}   (ECHO world-model target — normally discarded)")
     print(f"  warning     {n_warn:5d}   (harness boilerplate — excluded from env loss)")
     print("-" * 64)
-    print(f"ECHO 'free signal' (this episode): {n_obs}/{learnable} learnable tokens "
-          f"({pct_obs:.0f}%) are env observations")
-    print(f"                    standard agent-RL trains on {n_action} action tokens; "
-          f"ECHO adds {n_obs} more ({ratio:.1f}x), with no extra")
-    print(f"                    env interaction or rollout inference (logits already computed)")
+    print(
+        f"ECHO 'free signal' (this episode): {n_obs}/{learnable} learnable tokens "
+        f"({pct_obs:.0f}%) are env observations"
+    )
+    print(
+        f"                    standard agent-RL trains on {n_action} action tokens; "
+        f"ECHO adds {n_obs} more ({ratio:.1f}x), with no extra"
+    )
+    print(
+        "                    env interaction or rollout inference (logits already computed)"
+    )
     print("-" * 64)
 
     # advantage = reward is a 1-sequence stand-in for GRPO's group-relative advantage;
     # the action term here is REINFORCE-style (no ratio/clip/KL/critic).
     adv = torch.tensor([traj.reward])
 
-    _, m_grpo = echo_loss(logits, input_ids, masks["action_mask"], masks["obs_mask"], adv,
-                          world_model_coeff=0.0)
-    _, m_echo = echo_loss(logits, input_ids, masks["action_mask"], masks["obs_mask"], adv,
-                          world_model_coeff=args.lam)
+    _, m_grpo = echo_loss(
+        logits,
+        input_ids,
+        masks["action_mask"],
+        masks["obs_mask"],
+        adv,
+        world_model_coeff=0.0,
+    )
+    _, m_echo = echo_loss(
+        logits,
+        input_ids,
+        masks["action_mask"],
+        masks["obs_mask"],
+        adv,
+        world_model_coeff=args.lam,
+    )
     # verifier-free: reward off -> the env-token CE *is* the objective (coeff 1.0 == pure CE)
-    _, m_free = echo_loss(logits, input_ids, masks["action_mask"], masks["obs_mask"], adv,
-                          world_model_coeff=1.0, use_rl=False)
+    _, m_free = echo_loss(
+        logits,
+        input_ids,
+        masks["action_mask"],
+        masks["obs_mask"],
+        adv,
+        world_model_coeff=1.0,
+        use_rl=False,
+    )
+    grpo = m_grpo["loss"] + 0.0  # normalize -0.0 -> 0.0 for display
 
     print("loss on the SAME forward pass (action term is REINFORCE-style; advantage =")
-    print("reward is a 1-sequence stand-in for GRPO's group-relative advantage):")
-    print(f"  GRPO-style (λ=0)           loss={m_grpo['loss']:+.4f}  "
-          f"(action term only; l_env={m_grpo['l_env']:.4f} computed but unused)")
-    print(f"  ECHO (λ={args.lam})             loss={m_echo['loss']:+.4f}  "
-          f"(l_grpo={m_echo['l_grpo']:+.4f} + {args.lam}·l_env, l_env={m_echo['l_env']:.4f})")
-    print(f"  verifier-free (reward off) loss={m_free['loss']:+.4f}  "
-          f"(pure env-token CE — l_grpo=0)")
+    print(
+        f"reward={traj.reward:+.1f}, a 1-sequence stand-in for GRPO's group-relative advantage):"
+    )
+    print(f"  GRPO-style  (action only)  loss={grpo:+.4f}")
+    print(
+        f"  ECHO        (action + λ·env)loss={m_echo['loss']:+.4f}  "
+        f"(λ={args.lam}, l_env={m_echo['l_env']:.4f})"
+    )
+    print(
+        f"  verifier-free (env CE only)loss={m_free['loss']:+.4f}  "
+        f"(reward off → pure env-token CE)"
+    )
+    if abs(traj.reward) < 1e-9:
+        print()
+        print(
+            "  ↳ this real episode's verifier returned no success signal (reward 0), so the"
+        )
+        print(
+            "    policy-gradient term is exactly 0 — standard agent-RL learns nothing here."
+        )
+        print(
+            f"    ECHO still extracts dense signal from {n_obs} observation tokens. Sparse or"
+        )
+        print(
+            "    ambiguous reward is exactly ECHO's motivating case (see verifier-free above)."
+        )
     print("=" * 64)
     print("takeaway: the env_output tokens above are computed in the same forward")
     print("pass and normally thrown away. ECHO turns them into dense training signal")

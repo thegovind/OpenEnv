@@ -12,9 +12,10 @@
 
 This example runs that idea on a **real, upstream** environment:
 [`envs/agent_world_model_env`](../../envs/agent_world_model_env) — *AgentWorldModel-1K*,
-a suite of **1,000 MCP tool-use environments / 10,000 tasks**. AWM episodes are long
-and tool-heavy, so most of their tokens are environment observations — exactly the
-signal ECHO recovers.
+a suite of **1,000 MCP tool-use environments / 10,000 tasks**. The bundled fixture is a
+**real captured `e_commerce_33` episode** (see `capture_episode.py`), and `--live`
+re-runs it against a live AWM server. AWM episodes are long and tool-heavy, so the vast
+majority of their tokens are environment observations — exactly the signal ECHO recovers.
 
 It is a companion to **RFC 010 / PR #16** (the ECHO proposal + a toy terminal env)
 and the proposal issue **#14**. Where #16 introduces the primitive, this shows it on
@@ -62,8 +63,9 @@ flowchart LR
 | `echo.py` | Self-contained ECHO core — roles, `tokenize_trajectory`, `echo_loss` (distilled from RFC 010 / PR #16). |
 | `awm.py` | **The new bit** — `awm_episode_to_trajectory` (AWM episode → role-masked `Trajectory`) and `live_capture` (replay tool calls against a running AWM server, capturing real observations). |
 | `run_demo.py` | End-to-end walkthrough: role accounting + the loss three ways. Offline by default; `--hf` for a real model; `--live` for a real server. |
-| `fixtures/awm_ecommerce_episode.json` | A representative AWM e-commerce episode (search → inspect → add-to-cart → verify). |
-| `test_echo_on_awm.py` | Pins the role-mask partition, the "free signal" property, and the loss invariants. |
+| `capture_episode.py` | How the fixture was made — runs a correct solution to the real `e_commerce_33` task against a live server and records every real `(action, observation)`. |
+| `fixtures/awm_ecommerce_episode.json` | A **real captured** `e_commerce_33` episode (search → offers → cart → add → list → verify). |
+| `test_echo_on_awm.py` | Pins the role-mask partition, the "free signal" property, warning separation, and the loss invariants (10 tests). |
 
 ## Run it
 
@@ -74,60 +76,80 @@ pip install -r requirements.txt
 
 python run_demo.py                       # offline, deterministic, no downloads
 python run_demo.py --hf sshleifer/tiny-gpt2   # real HF tokenizer + model (optional)
-python run_demo.py --live http://localhost:8899   # capture from a running AWM server
-pytest -q                                # 8 tests
+pytest -q                                # 10 tests
 ```
 
-Offline output (deterministic):
+(`--live` and re-capturing the fixture need a running AWM server — see **Live mode** below.)
+
+Offline output (deterministic, on the real captured episode):
 
 ```
 ================================================================
 AWM scenario : e_commerce_33  (task_idx 0)
-steps        : 4   reward: 1.0
+task         : Search for 'wireless noise cancelling headphones', sort results by ave...
+steps        : 6   reward: 0.0
 ----------------------------------------------------------------
 per-token roles (target tokens):
-  context       415   (given — never a loss target)
-  action        372   (GRPO / policy-gradient target)
-  env_output    911   (ECHO world-model target — normally discarded)
-  warning        76   (harness boilerplate — excluded from env loss)
+  context      1304   (given — never a loss target)
+  action        588   (GRPO / policy-gradient target)
+  env_output   4659   (ECHO world-model target — normally discarded)
+  warning         0   (harness boilerplate — excluded from env loss)
 ----------------------------------------------------------------
-ECHO 'free signal' (this episode): 911/1283 learnable tokens (71%) are env observations
-                    standard agent-RL trains on 372 action tokens; ECHO adds 911 more (2.4x), with no extra
+ECHO 'free signal' (this episode): 4659/5247 learnable tokens (89%) are env observations
+                    standard agent-RL trains on 588 action tokens; ECHO adds 4659 more (7.9x), with no extra
                     env interaction or rollout inference (logits already computed)
 ----------------------------------------------------------------
 loss on the SAME forward pass (action term is REINFORCE-style; advantage =
-reward is a 1-sequence stand-in for GRPO's group-relative advantage):
-  GRPO-style (λ=0)           loss=+4.4277  (action term only; l_env=4.4096 computed but unused)
-  ECHO (λ=0.05)             loss=+4.6482  (l_grpo=+4.4277 + 0.05·l_env, l_env=4.4096)
-  verifier-free (reward off) loss=+4.4096  (pure env-token CE — l_grpo=0)
+reward=+0.0, a 1-sequence stand-in for GRPO's group-relative advantage):
+  GRPO-style  (action only)  loss=+0.0000
+  ECHO        (action + λ·env)loss=+0.2212  (λ=0.05, l_env=4.4239)
+  verifier-free (env CE only)loss=+4.4239  (reward off → pure env-token CE)
+
+  ↳ this real episode's verifier returned no success signal (reward 0), so the
+    policy-gradient term is exactly 0 — standard agent-RL learns nothing here.
+    ECHO still extracts dense signal from 4659 observation tokens. Sparse or
+    ambiguous reward is exactly ECHO's motivating case (see verifier-free above).
 ================================================================
 ```
 
-**The result in one line:** in this example episode, **~71% of the learnable tokens
-are environment observations** — ~**2.4×** the agent's action tokens — which standard
-agent-RL masks out and ECHO turns into dense training signal, with **no extra
+**The result in one line:** on this real `e_commerce_33` episode, **89% of the learnable
+tokens are environment observations** — ~**7.9×** the agent's action tokens — which
+standard agent-RL masks out and ECHO turns into dense training signal, with **no extra
 environment interaction or rollout inference** (the observation logits are already
-computed; the only added cost is a small extra loss/backward term). The ratio holds
-with a real sub-word tokenizer too (`--hf`: ~72%). These are *token-accounting*
-numbers on one fixture — not a trained-model benchmark.
+computed; the only added cost is a small extra loss/backward term). And because the
+deterministic verifier returns **no success signal here (reward 0)**, the policy-gradient
+term is exactly zero — yet ECHO still learns from the observations. *Sparse / ambiguous
+reward in realistic agentic tasks is precisely ECHO's motivating case.* (Numbers are
+*token accounting* on one real episode — not a trained-model benchmark.)
 
 ### Live mode (real environment output)
 
+The AWM server spins up a per-scenario sub-env; install its deps once, then run it:
+
 ```bash
-# terminal 1 — start the upstream AWM server (from the repo root)
+# from the repo root — install env deps + torch (for the ECHO loss in run_demo)
+uv sync --all-extras
+uv pip install torch sqlalchemy fastapi-mcp
+
+# terminal 1 — start the upstream AWM server
 PYTHONPATH=src:envs uv run uvicorn \
     envs.agent_world_model_env.server.app:app --host 0.0.0.0 --port 8899
 
-# terminal 2 — replay the fixture's tool calls against the real env and build the
-# ECHO trajectory from the *actual* observations it returns (run from this dir;
-# src + envs must be importable so `agent_world_model_env` resolves)
-PYTHONPATH=../../src:../../envs python run_demo.py --live http://localhost:8899
+# terminal 2 — re-run the episode against the real env, building the ECHO trajectory
+# from the *actual* observations it returns
+PYTHONPATH=src:envs uv run python \
+    examples/echo_on_agent_world_model/run_demo.py --live http://localhost:8899
+
+# (optional) re-record the fixture from a fresh real rollout
+PYTHONPATH=src:envs uv run python \
+    examples/echo_on_agent_world_model/capture_episode.py --base-url http://localhost:8899
 ```
 
-`--live` takes the real task/scenario/tool list from `reset()`/`list_tools()`,
-captures genuine `tool_result`/`verify_result` observations, and releases the session
-with `done`. The fixture's scripted tool calls stand in for what a policy would
-choose (no trained policy required).
+`--live` takes the real task/scenario/tool list from `reset()`/`list_tools()`, captures
+genuine `tool_result`/`verify_result` observations, and releases the session with `done`.
+The scripted tool calls stand in for what a policy would choose (no trained policy
+required). You can also point `--live` at the hosted Space
+(`--live https://chilled-agent-world-model-env.hf.space`).
 
 ## How this connects
 

@@ -31,7 +31,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from echo import ACTION, CONTEXT, ENV_OUTPUT, WARNING, Segment, Trajectory
+from echo import ACTION, CONTEXT, ENV_OUTPUT, Segment, Trajectory, WARNING
 
 DEFAULT_SYSTEM = (
     "You are a tool-using agent operating inside an Agent World Model environment. "
@@ -47,7 +47,7 @@ def _dumps(obj: Any) -> str:
 
 def serialize_tool_call(tool_name: str, arguments: dict[str, Any]) -> str:
     """An agent action, in a generic Hermes-style tool-call envelope (ACTION tokens)."""
-    return f'<tool_call>\n{_dumps({"name": tool_name, "arguments": arguments})}\n</tool_call>\n'
+    return f"<tool_call>\n{_dumps({'name': tool_name, 'arguments': arguments})}\n</tool_call>\n"
 
 
 def serialize_env_output(payload: Any) -> str:
@@ -87,20 +87,20 @@ def awm_episode_to_trajectory(
     """Turn an AWM episode dict into a role-segmented :class:`Trajectory`.
 
     Expected episode shape (matches :func:`live_capture` output and the bundled
-    fixture)::
+    fixture, which is a real ``e_commerce_33`` capture)::
 
         {
           "scenario": "e_commerce_33",
-          "task": "Find an in-stock wireless headphone under $100 ...",
+          "task": "Search for 'wireless noise cancelling headphones', sort by ...",
           "task_idx": 0,
-          "tools": ["search_products", "get_product", "add_to_cart", "verify", ...],
+          "tools": ["search_products", "get_product_by_id", "add_item_to_cart", ...],
           "steps": [
-            {"action": {"tool_name": "...", "arguments": {...}},
-             "observation": {"tool_name": "...", "tool_result": {...},
-                             "warning": "...", "error": null, ...}},
+            {"action": {"tool_name": "search_products", "arguments": {...}},
+             "observation": {"tool_name": "search_products", "tool_result": "{...}",
+                             "warning": null, "error": null, ...}},
             ...
           ],
-          "reward": 1.0
+          "reward": 0.0
         }
 
     Segment order per step is ACTION -> [WARNING] -> ENV_OUTPUT, so the model is

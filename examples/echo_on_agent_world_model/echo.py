@@ -23,10 +23,10 @@ import torch
 import torch.nn.functional as F
 
 # ── per-token roles ──────────────────────────────────────────────────────────
-CONTEXT = "context"        # system prompt / task — given, never a loss target
-ACTION = "action"          # agent tokens — the GRPO (policy-gradient) target
+CONTEXT = "context"  # system prompt / task — given, never a loss target
+ACTION = "action"  # agent tokens — the GRPO (policy-gradient) target
 ENV_OUTPUT = "env_output"  # real tool/world output — the ECHO world-model target
-WARNING = "warning"        # harness boilerplate — excluded from the env loss by default
+WARNING = "warning"  # harness boilerplate — excluded from the env loss by default
 
 ROLES = (CONTEXT, ACTION, ENV_OUTPUT, WARNING)
 
@@ -98,14 +98,14 @@ def tokenize_trajectory(
 
 
 def echo_loss(
-    logits: torch.Tensor,        # [B, T, V]
-    input_ids: torch.Tensor,     # [B, T]
-    action_mask: torch.Tensor,   # [B, T] bool — agent/action tokens (GRPO target)
-    obs_mask: torch.Tensor,      # [B, T] bool — env observation tokens (ECHO target)
-    advantages: torch.Tensor,    # [B] per-sequence advantage (e.g. GRPO group-relative)
+    logits: torch.Tensor,  # [B, T, V]
+    input_ids: torch.Tensor,  # [B, T]
+    action_mask: torch.Tensor,  # [B, T] bool — agent/action tokens (GRPO target)
+    obs_mask: torch.Tensor,  # [B, T] bool — env observation tokens (ECHO target)
+    advantages: torch.Tensor,  # [B] per-sequence advantage (e.g. GRPO group-relative)
     *,
     world_model_coeff: float = 0.05,  # λ. 0.0 == vanilla GRPO. Keep small.
-    use_rl: bool = True,              # False == verifier-free (env-token loss only)
+    use_rl: bool = True,  # False == verifier-free (env-token loss only)
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """The hybrid ECHO loss over a batch of rollouts.
 
@@ -117,8 +117,8 @@ def echo_loss(
       * ``use_rl is False``        ⇒ verifier-free world modeling (env-token CE only) —
         the "bootstrap before you have a grader" mode.
     """
-    logp = F.log_softmax(logits[:, :-1, :], dim=-1)          # [B, T-1, V]
-    targets = input_ids[:, 1:]                               # [B, T-1]
+    logp = F.log_softmax(logits[:, :-1, :], dim=-1)  # [B, T-1, V]
+    targets = input_ids[:, 1:]  # [B, T-1]
     token_logp = logp.gather(-1, targets.unsqueeze(-1)).squeeze(-1)  # [B, T-1]
 
     a = action_mask[:, 1:].float()
