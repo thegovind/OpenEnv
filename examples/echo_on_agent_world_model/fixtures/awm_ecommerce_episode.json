@@ -1,0 +1,44 @@
+{
+  "scenario": "e_commerce_33",
+  "task": "Find an in-stock wireless headphone under $100 and add the cheapest qualifying one to the cart, then verify the order.",
+  "task_idx": 0,
+  "tools": ["search_products", "get_product", "add_to_cart", "view_cart", "verify", "done"],
+  "steps": [
+    {
+      "action": {"tool_name": "search_products", "arguments": {"query": "wireless headphones", "max_price": 100}},
+      "observation": {
+        "tool_name": "search_products",
+        "tool_result": [
+          {"id": "P-1042", "name": "Aero Wireless On-Ear", "price": 89.99, "in_stock": true, "rating": 4.1},
+          {"id": "P-2087", "name": "PulseBuds Lite", "price": 59.0, "in_stock": true, "rating": 4.3},
+          {"id": "P-3310", "name": "DeepBass Studio", "price": 74.5, "in_stock": false, "rating": 4.6},
+          {"id": "P-4521", "name": "NovaSound ANC", "price": 129.0, "in_stock": true, "rating": 4.8}
+        ]
+      }
+    },
+    {
+      "action": {"tool_name": "get_product", "arguments": {"id": "P-2087"}},
+      "observation": {
+        "tool_name": "get_product",
+        "tool_result": {"id": "P-2087", "name": "PulseBuds Lite", "price": 59.0, "in_stock": true, "rating": 4.3, "warranty_months": 12, "ships_in_days": 2},
+        "warning": "catalog prices are indicative and may change at checkout"
+      }
+    },
+    {
+      "action": {"tool_name": "add_to_cart", "arguments": {"id": "P-2087", "qty": 1}},
+      "observation": {
+        "tool_name": "add_to_cart",
+        "tool_result": {"cart_id": "C-77", "items": [{"id": "P-2087", "qty": 1, "price": 59.0}], "subtotal": 59.0, "currency": "USD"}
+      }
+    },
+    {
+      "action": {"tool_name": "verify", "arguments": {"verifier_mode": "code"}},
+      "observation": {
+        "tool_name": "verify",
+        "reward_type": "task_success",
+        "verify_result": {"passed": true, "checks": ["cheapest_in_stock_selected", "under_budget", "added_to_cart"], "score": 1.0}
+      }
+    }
+  ],
+  "reward": 1.0
+}
