@@ -66,8 +66,10 @@ class _FakeAdapter:
         self.exec_commands = []
         self.deleted = []
         self.closed = False
+        self.close_count = 0
         self.port_url = "https://aca-sandbox-port.example"
         self.fail_add_port = False
+        self.fail_delete = False
         self.dead_process = False
         self.log = "server crashed"
 
@@ -97,9 +99,12 @@ class _FakeAdapter:
 
     def delete_sandbox(self, sandbox):
         self.deleted.append(sandbox)
+        if self.fail_delete:
+            raise RuntimeError("delete failed")
 
     def close(self):
         self.closed = True
+        self.close_count += 1
 
 
 @pytest.fixture()
@@ -175,10 +180,16 @@ def test_empty_sources_raise_clear_errors(adapter):
 
     with pytest.raises(ValueError, match="non-empty ACA disk"):
         provider.start_container("")
+    with pytest.raises(ValueError, match="non-empty ACA disk"):
+        provider.start_container("   ")  # whitespace-only
     with pytest.raises(ValueError, match="disk: source"):
         provider.start_container("disk:")
+    with pytest.raises(ValueError, match="disk: source"):
+        provider.start_container("disk: ")  # whitespace-only name
     with pytest.raises(ValueError, match="disk-id: source"):
         provider.start_container("disk-id:")
+    with pytest.raises(ValueError, match="disk-id: source"):
+        provider.start_container("disk-id:  ")  # whitespace-only id
 
 
 @pytest.mark.parametrize("disk_name", ["ubuntu", "python-3.11"])
@@ -251,6 +262,19 @@ def test_start_container_cleans_up_on_port_failure(adapter):
     assert adapter.deleted == [adapter.sandbox]
     with pytest.raises(RuntimeError, match="no active base_url"):
         _ = provider.base_url
+
+
+def test_cleanup_failure_does_not_mask_original_error(adapter):
+    """If cleanup (delete_sandbox) also fails, the ORIGINAL start error must
+    still propagate, not be replaced by the secondary cleanup error."""
+    adapter.fail_add_port = True  # original failure
+    adapter.fail_delete = True  # secondary failure during stop_container()
+    provider = _provider(adapter)
+
+    with pytest.raises(RuntimeError, match="port failed"):
+        provider.start_container("ubuntu")
+
+    assert adapter.deleted == [adapter.sandbox]  # cleanup was still attempted
 
 
 def test_unsupported_start_kwargs_raise(adapter):
@@ -414,6 +438,19 @@ def test_adapter_owned_close_closes_adapter():
     provider.close()
 
     assert adapter.closed is True
+
+
+def test_double_close_closes_adapter_once():
+    """A second close()/context exit must not close the owned SDK client again
+    (a preview SDK's close is not guaranteed idempotent)."""
+    adapter = _FakeAdapter()
+    provider = _provider(adapter)
+    provider._owns_adapter = True
+
+    provider.close()
+    provider.close()
+
+    assert adapter.close_count == 1
 
 
 def test_context_manager_closes_provider():

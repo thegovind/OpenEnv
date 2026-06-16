@@ -211,16 +211,17 @@ class _DefaultACASandboxAdapter:
 
 
 def _source_from_image(image: str) -> tuple[str | None, str | None]:
-    if not image:
+    if not image or not image.strip():
         raise ValueError("image must be a non-empty ACA disk or disk-id reference")
+    image = image.strip()
 
     if image.startswith("disk:"):
-        disk = image[len("disk:") :]
+        disk = image[len("disk:") :].strip()
         if not disk:
             raise ValueError("disk: source must include a disk image name")
         return disk, None
     if image.startswith("disk-id:"):
-        disk_id = image[len("disk-id:") :]
+        disk_id = image[len("disk-id:") :].strip()
         if not disk_id:
             raise ValueError("disk-id: source must include a disk image id")
         return None, disk_id
@@ -500,7 +501,12 @@ class ACASandboxProvider(ContainerProvider):
             )
             self._port = bind_port
         except Exception:
-            self.stop_container()
+            # A cleanup failure here must not mask the original error: swallow
+            # any exception from stop_container() so the root cause propagates.
+            try:
+                self.stop_container()
+            except Exception:
+                pass
             raise
 
         return self._base_url
@@ -662,6 +668,8 @@ class ACASandboxProvider(ContainerProvider):
         self.stop_container()
         if self._owns_adapter:
             self._adapter.close()
+            # don't close a second time on a subsequent close()/context exit
+            self._owns_adapter = False
 
 
 __all__ = ["ACASandboxProvider"]

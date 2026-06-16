@@ -116,7 +116,7 @@ class ContainerProvider(ABC):
     def __enter__(self: _ContainerProviderT) -> _ContainerProviderT:
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(self, exc_type, exc, tb) -> Optional[bool]:
         self.close()
         return None
 
