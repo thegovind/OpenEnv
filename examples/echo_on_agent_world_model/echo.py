@@ -60,6 +60,11 @@ def tokenize_trajectory(
     Each segment is tokenized independently (``add_special_tokens=False``) and
     concatenated, so every token's role is known exactly.
 
+    Note: tokenizing per-segment yields *exact* role masks but can differ from
+    tokenizing the full string at segment boundaries for sub-word (BPE) tokenizers.
+    For role accounting and this reference that's fine; a trainer that needs
+    byte-exact parity should tokenize once and assign roles by character offsets.
+
     Args:
         world_loss_target: ``"env_only"`` (default) puts only real ``env_output``
             tokens under the world-model loss — excluding the harness ``warning``

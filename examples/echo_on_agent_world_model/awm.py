@@ -15,7 +15,9 @@ whose fields line up almost exactly with what ECHO needs per token:
 That last row is the non-obvious win: AWM *already* separates real environment
 output (``tool_result``/``error``) from harness ``warning`` text — precisely the
 distinction ECHO's reference code carries via ``completion_warning_masks``. So an
-AWM rollout is a ready-made ECHO trajectory; this module just serializes it.
+AWM **tool-use** rollout maps directly onto ECHO's role masks; this module
+serializes that common ``CallToolAction`` + ``verify`` subset. (List-tools
+observations and ``done`` metadata are out of scope for this reference example.)
 
 Two entry points:
 
@@ -69,7 +71,10 @@ def _env_payload(obs: dict[str, Any]) -> Any:
             out["reward_type"] = obs["reward_type"]
         return out
     if obs.get("error") is not None:
-        return {"error": obs["error"]}
+        payload = {"error": obs["error"]}
+        if obs.get("reward_type") is not None:
+            payload["reward_type"] = obs["reward_type"]
+        return payload
     return None
 
 
@@ -160,22 +165,55 @@ def live_capture(base_url: str, episode: dict[str, Any]) -> dict[str, Any]:
         captured: list[dict[str, Any]] = []
         last_reward = 0.0
         async with AWMEnv(base_url=base_url) as env:
-            await env.reset(
+            # take the *real* task / scenario / tools from the server, not the fixture
+            reset_res = await env.reset(
                 scenario=episode["scenario"], task_idx=episode.get("task_idx", 0)
             )
-            for step in episode["steps"]:
-                action = step["action"]
-                result = await env.step(
-                    CallToolAction(
-                        tool_name=action["tool_name"],
-                        arguments=action.get("arguments", {}),
+            ro = reset_res.observation
+            ro_dump = ro.model_dump() if hasattr(ro, "model_dump") else {}
+            try:
+                tools = [t.name for t in await env.list_tools()]
+            except Exception:
+                tools = episode.get("tools", [])
+
+            ends_with_done = bool(episode["steps"]) and (
+                episode["steps"][-1]["action"].get("tool_name") == "done"
+            )
+            try:
+                for step in episode["steps"]:
+                    action = step["action"]
+                    result = await env.step(
+                        CallToolAction(
+                            tool_name=action["tool_name"],
+                            arguments=action.get("arguments", {}),
+                        )
                     )
-                )
-                obs = result.observation
-                obs_dict = obs.model_dump() if hasattr(obs, "model_dump") else dict(obs)
-                captured.append({"action": action, "observation": obs_dict})
-                if getattr(result, "reward", None) is not None:
-                    last_reward = float(result.reward)
-        return {**episode, "steps": captured, "reward": last_reward}
+                    obs = result.observation
+                    obs_dict = (
+                        obs.model_dump() if hasattr(obs, "model_dump") else dict(obs)
+                    )
+                    captured.append({"action": action, "observation": obs_dict})
+                    if getattr(result, "reward", None) is not None:
+                        last_reward = float(result.reward)
+            finally:
+                # `done` destroys the env subprocess — always release it
+                if not ends_with_done:
+                    try:
+                        await env.step(
+                            CallToolAction(
+                                tool_name="done", arguments={"keep_session": False}
+                            )
+                        )
+                    except Exception:
+                        pass
+
+        return {
+            "scenario": ro_dump.get("scenario") or episode.get("scenario"),
+            "task": ro_dump.get("task") or episode.get("task", ""),
+            "task_idx": ro_dump.get("task_idx", episode.get("task_idx", 0)),
+            "tools": tools,
+            "steps": captured,
+            "reward": last_reward,
+        }
 
     return asyncio.run(_run())

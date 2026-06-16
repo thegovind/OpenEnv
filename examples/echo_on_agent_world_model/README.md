@@ -91,44 +91,52 @@ per-token roles (target tokens):
   env_output    911   (ECHO world-model target — normally discarded)
   warning        76   (harness boilerplate — excluded from env loss)
 ----------------------------------------------------------------
-ECHO 'free signal': 911/1283 learnable tokens (71%) are environment observations
-                    standard agent-RL trains on 372; ECHO adds 911 more (2.4x) at ~zero extra compute
+ECHO 'free signal' (this episode): 911/1283 learnable tokens (71%) are env observations
+                    standard agent-RL trains on 372 action tokens; ECHO adds 911 more (2.4x), with no extra
+                    env interaction or rollout inference (logits already computed)
 ----------------------------------------------------------------
-loss on the SAME forward pass:
-  vanilla GRPO (λ=0)        loss=+4.4277  (l_grpo=+4.4277, l_env=4.4096 unused)
-  ECHO (λ=0.05)            loss=+4.6482  (l_grpo=+4.4277, l_env=4.4096)
-  verifier-free ECHO        loss=+0.2205  (reward off → l_grpo=0, pure env-token CE)
+loss on the SAME forward pass (action term is REINFORCE-style; advantage =
+reward is a 1-sequence stand-in for GRPO's group-relative advantage):
+  GRPO-style (λ=0)           loss=+4.4277  (action term only; l_env=4.4096 computed but unused)
+  ECHO (λ=0.05)             loss=+4.6482  (l_grpo=+4.4277 + 0.05·l_env, l_env=4.4096)
+  verifier-free (reward off) loss=+4.4096  (pure env-token CE — l_grpo=0)
 ================================================================
 ```
 
-**The result in one line:** on a real AWM episode, **~71% of the learnable tokens are
-environment observations** — ~**2.4×** the agent's action tokens — and ECHO turns them
-into dense training signal at ~zero extra compute. The ratio holds with a real
-sub-word tokenizer too (`--hf`: ~72%).
+**The result in one line:** in this example episode, **~71% of the learnable tokens
+are environment observations** — ~**2.4×** the agent's action tokens — which standard
+agent-RL masks out and ECHO turns into dense training signal, with **no extra
+environment interaction or rollout inference** (the observation logits are already
+computed; the only added cost is a small extra loss/backward term). The ratio holds
+with a real sub-word tokenizer too (`--hf`: ~72%). These are *token-accounting*
+numbers on one fixture — not a trained-model benchmark.
 
 ### Live mode (real environment output)
 
 ```bash
-# terminal 1 — start the upstream AWM server
+# terminal 1 — start the upstream AWM server (from the repo root)
 PYTHONPATH=src:envs uv run uvicorn \
     envs.agent_world_model_env.server.app:app --host 0.0.0.0 --port 8899
 
 # terminal 2 — replay the fixture's tool calls against the real env and build the
-# ECHO trajectory from the *actual* observations it returns
-python run_demo.py --live http://localhost:8899
+# ECHO trajectory from the *actual* observations it returns (run from this dir;
+# src + envs must be importable so `agent_world_model_env` resolves)
+PYTHONPATH=../../src:../../envs python run_demo.py --live http://localhost:8899
 ```
 
-`--live` proves the adapter on genuine environment output; the fixture's scripted
-tool calls stand in for what a policy would choose (no trained policy required).
+`--live` takes the real task/scenario/tool list from `reset()`/`list_tools()`,
+captures genuine `tool_result`/`verify_result` observations, and releases the session
+with `done`. The fixture's scripted tool calls stand in for what a policy would
+choose (no trained policy required).
 
 ## How this connects
 
 - **RFC 010 / PR #16** (proposal #14) — the ECHO objective + role-mask schema. This
   example is the "real environment" companion to #16's toy terminal env.
 - **#12** (model-optimization backends: Tinker + Ray async-RL) — where the masks
-  produced here are consumed: ECHO is two accumulated `forward_backward` passes
-  (importance-sampling on actions + λ-scaled cross-entropy on observations) before
-  one `optim_step`.
+  produced here are consumed: over the *same rollout* (no new sampling), ECHO is two
+  accumulated `forward_backward` passes (importance-sampling on actions + λ-scaled
+  cross-entropy on observations) before one `optim_step`.
 - **AWM** ([upstream env](../../envs/agent_world_model_env); hackathon track in
   upstream PR #428) — the substrate; 1k envs of exactly the long, observation-heavy
   trajectories where ECHO pays off.

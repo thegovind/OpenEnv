@@ -30,7 +30,7 @@ import pathlib
 import torch
 
 from awm import awm_episode_to_trajectory, live_capture
-from echo import ACTION, CONTEXT, ENV_OUTPUT, WARNING, echo_loss, tokenize_trajectory
+from echo import echo_loss, tokenize_trajectory
 
 HERE = pathlib.Path(__file__).parent
 FIXTURE = HERE / "fixtures" / "awm_ecommerce_episode.json"
@@ -109,7 +109,6 @@ def main() -> None:
     masks = {k: v.unsqueeze(0) for k, v in tok.items() if k != "input_ids"}
 
     # ── role accounting (next-token: roles taken from target tokens) ─────────
-    n_ctx = int((torch.tensor([s.role == CONTEXT for s in traj.segments])).sum())  # seg-level
     a = tok["action_mask"][1:]
     o = tok["obs_mask"][1:]
     w = tok["warning_mask"][1:]
@@ -130,28 +129,33 @@ def main() -> None:
     print(f"  env_output  {n_obs:5d}   (ECHO world-model target — normally discarded)")
     print(f"  warning     {n_warn:5d}   (harness boilerplate — excluded from env loss)")
     print("-" * 64)
-    print(f"ECHO 'free signal': {n_obs}/{learnable} learnable tokens "
-          f"({pct_obs:.0f}%) are environment observations")
-    print(f"                    standard agent-RL trains on {n_action}; "
-          f"ECHO adds {n_obs} more ({ratio:.1f}x) at ~zero extra compute")
+    print(f"ECHO 'free signal' (this episode): {n_obs}/{learnable} learnable tokens "
+          f"({pct_obs:.0f}%) are env observations")
+    print(f"                    standard agent-RL trains on {n_action} action tokens; "
+          f"ECHO adds {n_obs} more ({ratio:.1f}x), with no extra")
+    print(f"                    env interaction or rollout inference (logits already computed)")
     print("-" * 64)
 
-    adv = torch.tensor([traj.reward])  # single-sequence stand-in for group-relative adv
+    # advantage = reward is a 1-sequence stand-in for GRPO's group-relative advantage;
+    # the action term here is REINFORCE-style (no ratio/clip/KL/critic).
+    adv = torch.tensor([traj.reward])
 
     _, m_grpo = echo_loss(logits, input_ids, masks["action_mask"], masks["obs_mask"], adv,
                           world_model_coeff=0.0)
     _, m_echo = echo_loss(logits, input_ids, masks["action_mask"], masks["obs_mask"], adv,
                           world_model_coeff=args.lam)
+    # verifier-free: reward off -> the env-token CE *is* the objective (coeff 1.0 == pure CE)
     _, m_free = echo_loss(logits, input_ids, masks["action_mask"], masks["obs_mask"], adv,
-                          world_model_coeff=args.lam, use_rl=False)
+                          world_model_coeff=1.0, use_rl=False)
 
-    print("loss on the SAME forward pass:")
-    print(f"  vanilla GRPO (λ=0)        loss={m_grpo['loss']:+.4f}  "
-          f"(l_grpo={m_grpo['l_grpo']:+.4f}, l_env={m_grpo['l_env']:.4f} unused)")
-    print(f"  ECHO (λ={args.lam})            loss={m_echo['loss']:+.4f}  "
-          f"(l_grpo={m_echo['l_grpo']:+.4f}, l_env={m_echo['l_env']:.4f})")
-    print(f"  verifier-free ECHO        loss={m_free['loss']:+.4f}  "
-          f"(reward off → l_grpo=0, pure env-token CE)")
+    print("loss on the SAME forward pass (action term is REINFORCE-style; advantage =")
+    print("reward is a 1-sequence stand-in for GRPO's group-relative advantage):")
+    print(f"  GRPO-style (λ=0)           loss={m_grpo['loss']:+.4f}  "
+          f"(action term only; l_env={m_grpo['l_env']:.4f} computed but unused)")
+    print(f"  ECHO (λ={args.lam})             loss={m_echo['loss']:+.4f}  "
+          f"(l_grpo={m_echo['l_grpo']:+.4f} + {args.lam}·l_env, l_env={m_echo['l_env']:.4f})")
+    print(f"  verifier-free (reward off) loss={m_free['loss']:+.4f}  "
+          f"(pure env-token CE — l_grpo=0)")
     print("=" * 64)
     print("takeaway: the env_output tokens above are computed in the same forward")
     print("pass and normally thrown away. ECHO turns them into dense training signal")

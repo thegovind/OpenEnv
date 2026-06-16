@@ -109,10 +109,20 @@ def test_verifier_free_is_pure_env_ce():
     input_ids, logits, m = _logits_for(t)
     adv = torch.tensor([1.0])
     loss, parts = echo_loss(logits, input_ids, m["action_mask"], m["obs_mask"], adv,
-                            world_model_coeff=0.05, use_rl=False)
+                            world_model_coeff=1.0, use_rl=False)
     assert parts["l_grpo"] == 0.0
-    assert abs(parts["loss"] - 0.05 * parts["l_env"]) < 1e-6
+    assert abs(parts["loss"] - parts["l_env"]) < 1e-6   # pure CE at coeff=1.0
     assert parts["l_env"] > 0.0
+
+
+def test_lambda_scales_env_term():
+    """λ multiplies the env-CE term (verifier-free isolates it for an exact check)."""
+    _, t = _tok_traj()
+    input_ids, logits, m = _logits_for(t)
+    adv = torch.tensor([1.0])
+    _, parts = echo_loss(logits, input_ids, m["action_mask"], m["obs_mask"], adv,
+                         world_model_coeff=0.05, use_rl=False)
+    assert abs(parts["loss"] - 0.05 * parts["l_env"]) < 1e-6
 
 
 def test_loss_is_finite_and_differentiable():
