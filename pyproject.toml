@@ -58,7 +58,9 @@ daytona = [
     "pyyaml>=6.0",
 ]
 aca = [
-    "azure-containerapps-sandbox>=0.1.0b2",
+    # Preview SDK — pin with an upper bound and re-validate on upgrades
+    # (the provider talks to it through a private adapter for exactly this churn).
+    "azure-containerapps-sandbox>=0.1.0b2,<0.2.0",
     "azure-identity>=1.23.0",
 ]
 inspect = [

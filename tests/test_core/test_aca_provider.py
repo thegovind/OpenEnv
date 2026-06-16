@@ -11,6 +11,42 @@ from openenv.core.containers.runtime.aca_provider import (
     _DefaultACASandboxAdapter,
     ACASandboxProvider,
 )
+from openenv.core.containers.runtime.providers import ContainerProvider
+
+
+def test_container_provider_base_has_noop_close_and_context_manager():
+    """The base ContainerProvider now defines close()/__enter__/__exit__ so a
+    caller can release resources polymorphically; the default close() is a no-op
+    and __exit__ calls it."""
+
+    class _Minimal(ContainerProvider):
+        def start_container(self, image, port=None, env_vars=None, **kwargs):
+            return "http://localhost:8000"
+
+        def stop_container(self):
+            pass
+
+        def wait_for_ready(self, base_url, timeout_s=30.0):
+            pass
+
+    # Default close() is a no-op and must not raise.
+    _Minimal().close()
+
+    # __enter__ returns self.
+    p = _Minimal()
+    with p as ctx:
+        assert ctx is p
+
+    # __exit__ invokes close() (override path).
+    class _Closes(_Minimal):
+        closed = False
+
+        def close(self):
+            type(self).closed = True
+
+    with _Closes():
+        pass
+    assert _Closes.closed is True
 
 
 class _ExecResult:
@@ -331,25 +367,33 @@ def test_failed_create_auto_clears_redact_values(adapter):
     assert adapter.deleted == []
 
 
-def test_failed_restart_create_does_not_delete_existing_sandbox(adapter):
-    """If a provider already has an active sandbox and a *second* start fails at
-    create_sandbox, the existing sandbox must NOT be deleted."""
+def test_double_start_raises_and_preserves_existing_sandbox(adapter):
+    """Only one sandbox per provider: a second start_container before stop must
+    raise and leave the existing sandbox intact (no orphaned/leaked sandbox)."""
     provider = _provider(adapter)
     provider.start_container("ubuntu")
     first_sandbox = provider._sandbox
     first_url = provider._base_url
 
-    def boom(**kwargs):
-        raise RuntimeError("create failed")
+    with pytest.raises(RuntimeError, match="already has an active sandbox"):
+        provider.start_container("python-3.11")
 
-    adapter.create_sandbox = boom
-    with pytest.raises(RuntimeError, match="create failed"):
-        provider.start_container("python-3.11", env_vars={"TOKEN": "secret-123"})
-
-    assert adapter.deleted == []  # the first sandbox was left intact
+    assert adapter.deleted == []  # the first sandbox is untouched, not orphaned
+    assert len(adapter.created) == 1  # the guard fired before a second create
     assert provider._sandbox is first_sandbox
     assert provider._base_url == first_url
-    assert provider._redact_values == set()
+
+
+def test_start_after_stop_is_allowed(adapter):
+    """After stop_container the provider can start a fresh sandbox again."""
+    provider = _provider(adapter)
+    provider.start_container("ubuntu")
+    provider.stop_container()
+
+    # Does not raise; a fresh sandbox is created.
+    url = provider.start_container("python-3.11")
+    assert url == adapter.port_url
+    assert len(adapter.created) == 2  # a real second create occurred after stop
 
 
 def test_close_deletes_sandbox(adapter):

@@ -4,7 +4,13 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""Azure Container Apps Sandbox provider for OpenEnv environments."""
+"""Azure Container Apps Sandbox provider for OpenEnv environments.
+
+Note: the ``RFC 002 security invariant S<n>`` references in this module point to
+the **proposed** "Cloud Sandbox Providers" amendment to RFC 002, which is pending
+review/sign-off by the RFC authors. They describe the security properties this
+provider enforces; treat them as proposed (not yet ratified) until that sign-off.
+"""
 
 from __future__ import annotations
 
@@ -260,7 +266,7 @@ class ACASandboxProvider(ContainerProvider):
     `EnvClient` connects to over `wss://`.
 
     The environment runs untrusted code, so the provider is secure by default
-    (RFC 002 security invariants): it requires explicit `anonymous_port=True`
+    (proposed RFC 002 security invariants): it requires explicit `anonymous_port=True`
     ingress (S2), enforces https/wss transport (S1), offers
     `deny_all_egress()` to block the cloud metadata/IMDS endpoint (S3), and
     never surfaces raw sandbox output unless `surface_server_logs=True` (S4).
@@ -271,10 +277,13 @@ class ACASandboxProvider(ContainerProvider):
 
     `close()` stops the active sandbox *and* releases the underlying SDK client,
     so prefer using the provider as a context manager (or call `close()`
-    explicitly) for deterministic cleanup. Note that `ContainerProvider` has no
-    `close()`, so a caller holding a bare `ContainerProvider` reference should
-    keep the concrete `ACASandboxProvider` (or its context manager) to release
-    the client.
+    explicitly) for deterministic cleanup. `close()`/`__enter__`/`__exit__` are
+    defined on `ContainerProvider` (default no-op), so a caller holding a bare
+    `ContainerProvider` reference can release the client polymorphically.
+
+    Only one sandbox is active per provider: calling `start_container` again
+    before `stop_container()`/`close()` raises `RuntimeError` rather than
+    orphaning the running sandbox.
 
     ```python
     with ACASandboxProvider(anonymous_port=True, ...) as provider:
@@ -409,6 +418,13 @@ class ACASandboxProvider(ContainerProvider):
         `egress_policy`, `anonymous_port`); unknown options raise `ValueError`
         so typos cannot silently change sandbox behavior.
         """
+        if self._sandbox is not None:
+            raise RuntimeError(
+                "ACASandboxProvider already has an active sandbox. Call "
+                "stop_container() (or close()) before starting another — a "
+                "second start would orphan the running sandbox."
+            )
+
         bind_port = port or _DEFAULT_ACA_PORT
         if bind_port != _DEFAULT_ACA_PORT:
             raise ValueError(
@@ -636,16 +652,16 @@ class ACASandboxProvider(ContainerProvider):
         return self._base_url
 
     def close(self) -> None:
-        """Stop the active sandbox and close the underlying SDK client."""
+        """Stop the active sandbox and close the underlying SDK client.
+
+        Overrides the base no-op so a caller can release the preview SDK client
+        deterministically (also invoked on context-manager exit). The base
+        `ContainerProvider` defines `close()`/`__enter__`/`__exit__`, so callers
+        holding a bare `ContainerProvider` can release resources polymorphically.
+        """
         self.stop_container()
         if self._owns_adapter:
             self._adapter.close()
-
-    def __enter__(self) -> "ACASandboxProvider":
-        return self
-
-    def __exit__(self, *exc: Any) -> None:
-        self.close()
 
 
 __all__ = ["ACASandboxProvider"]

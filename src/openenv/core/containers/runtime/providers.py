@@ -14,7 +14,9 @@ This module provides a pluggable architecture for different container providers
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence, TypeVar
+
+_ContainerProviderT = TypeVar("_ContainerProviderT", bound="ContainerProvider")
 
 
 class ContainerProvider(ABC):
@@ -99,6 +101,24 @@ class ContainerProvider(ABC):
             TimeoutError: If container doesn't become ready in time.
         """
         pass
+
+    def close(self) -> None:
+        """
+        Release provider-held resources (e.g. SDK clients, connections).
+
+        Defaults to a no-op so existing providers are unaffected. Providers that
+        hold external resources beyond the container itself (such as a cloud SDK
+        client) override this to release them; it is also invoked on context-
+        manager exit. Lightweight providers need not override it.
+        """
+        pass
+
+    def __enter__(self: _ContainerProviderT) -> _ContainerProviderT:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+        return None
 
 
 class LocalDockerProvider(ContainerProvider):
