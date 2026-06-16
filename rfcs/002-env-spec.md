@@ -164,7 +164,7 @@ The shared capability surface — and how it maps to OpenEnv:
 | Inject environment variables | `env_vars` arg |
 | Network egress policy | provider-local config |
 
-Because every provider has these, OpenEnv does **not** need a vendor-specific
+Cloud sandbox providers generally expose these, so OpenEnv does **not** need a vendor-specific
 concept in the core protocol — only a set of invariants that hold for all of
 them:
 
