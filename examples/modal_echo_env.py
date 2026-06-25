@@ -37,12 +37,18 @@ def main() -> int:
     # Provision the sandbox synchronously. The Modal SDK's blocking API warns
     # when driven from inside a running event loop, so the provider lifecycle is
     # kept out of asyncio; only the WebSocket client runs under asyncio.run().
+    # (The first run builds the image and cold-starts the sandbox, which can
+    # take a minute with no output - the prints below show progress.)
     provider = ModalProvider(app_name="openenv-echo")
+    print("Starting Modal sandbox (building image on first run)...", flush=True)
     base_url = provider.start_container(image)
+    print(f"Sandbox up at {base_url} - waiting for server...", flush=True)
     provider.wait_for_ready(base_url, timeout_s=180)
+    print("Server ready.", flush=True)
     try:
         asyncio.run(_interact(base_url))
     finally:
+        print("Stopping sandbox...", flush=True)
         provider.stop_container()
 
     return 0
