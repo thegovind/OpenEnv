@@ -4,6 +4,112 @@
 
 This RFC introduces the Rubric system—a composable, nn.Module-inspired abstraction for computing rewards in OpenEnv environments. Environment authors implement `__init__` and `forward(action, observation) -> float`; the framework handles composition, observability, and parallel evaluation.
 
+> **Amended (June 2026):** rubrics may now return a structured `RubricResult` (reward **plus** optional feedback / per-dimension scores / confidence) instead of a bare `float`, and a canonical `HumanFeedback` record standardizes how human review is captured. Both are backward compatible. See ["Amendment: Structured Rubric Results & Human Feedback Records"](#amendment-june-2026-structured-rubric-results--human-feedback-records) below.
+
+---
+
+## Amendment (June 2026): Structured Rubric Results & Human Feedback Records
+
+### Why
+
+A bare `float` is enough to *train* against, but it throws away everything an
+evaluator actually knows: a written rationale, per-dimension sub-scores, a
+confidence, or provenance. Three things need those richer signals and have
+nowhere to put them today:
+
+- **Human feedback.** A reviewer's label, preference, or correction over a
+  step/trajectory has no first-class representation.
+- **Dimensioned and model-based graders.** Multi-criteria graders (and
+  encoder/BERT-style scoring models) naturally produce *per-dimension* scores,
+  not a single number.
+- **Reflective optimizers.** Optimizers that improve a harness from *textual*
+  feedback (not just a scalar) need the grader's rationale — feeding a judge's
+  written reasoning back as feedback is far more sample-efficient than a number
+  alone.
+
+This amendment adds the minimal seam those all depend on, **without** changing
+how rewards are computed or where they live.
+
+### `RubricResult` — a backward-compatible richer return type
+
+`forward()` may now return **`float | RubricResult`**. A plain `float` behaves
+exactly as before; a `RubricResult` carries the reward plus optional context:
+
+```python
+@dataclass(frozen=True)
+class RubricResult:
+    reward: float                                  # scalar reward, as today
+    feedback: str | None = None                    # rationale / correction
+    dimensions: Mapping[str, float] | None = None  # per-criterion sub-scores
+    confidence: float | None = None                # grader confidence
+    metadata: Mapping[str, Any] = {}               # provenance / extensions
+
+    def __float__(self) -> float:                  # drop-in where a float is expected
+        return float(self.reward)
+```
+
+The framework collapses any output to its scalar via a single helper,
+`reward_value(output) -> float`, so reward computation never branches on the
+type. The base class records **both**: `last_score` stays the scalar reward
+(backward compatible introspection) and a new `last_result` holds the full
+output. Container aggregators (`Sequential`/`Gate`/`WeightedSum`) coerce a
+structured child to its scalar reward via `reward_value`, so existing
+composition keeps working unchanged; *aggregating* the feedback/dimensions of
+structured children (rather than just their scalars) is a deliberate follow-up.
+
+> **Why an object, not a `(reward, feedback)` tuple.** A tuple can't grow to
+> hold dimensions, confidence, or provenance without churn, and it reads
+> ambiguously at call sites. A small frozen dataclass with `__float__` stays
+> drop-in where a float is expected while leaving room to extend.
+
+### `HumanFeedback` — capturing human review as data
+
+A `HumanFeedback` record is a **data record**, not a scoring mechanism. It
+standardizes how a single human judgement is represented so later work has one
+canonical shape to consume:
+
+```python
+@dataclass(frozen=True)
+class HumanFeedback:
+    kind: FeedbackKind                 # label | preference | correction
+    target: FeedbackTarget = ...       # step | trajectory | scenario | dimension
+    value: float | str | None = None   # label value, or preferred id
+    against: str | None = None         # rejected id (for preferences)
+    dimension: str | None = None       # which rubric dimension (if any)
+    comment: str | None = None         # free-text rationale / correction
+    reviewer_id: str | None = None     # opaque, non-PII reviewer id
+    target_id: str | None = None       # links back to the scored artifact
+    metadata: Mapping[str, Any] = {}
+```
+
+`reviewer_id` is explicitly opaque — **no names or emails**. Production-trace
+import, redaction, and scenario mining are *not* in scope here.
+
+### Invariant preserved: reward is still computed in the environment
+
+This amendment does **not** introduce external reward synthesis. Rubrics still
+run server-side and the environment still computes reward during `step()`. A
+`RubricResult` is just a richer return value. *Calibrating* a grader from
+`HumanFeedback` is an **offline** concern, and any fitted parameters become
+environment-owned rubric configuration/artifacts (referenced from the manifest,
+versioned with provenance) — never a runtime call-out that decides reward. That
+calibration machinery is deliberately out of scope for this amendment.
+
+### Non-normative future use
+
+The seam is intentionally optimizer-agnostic and grader-agnostic. It is what
+later, separate proposals can build on:
+
+- **Grader calibration** can consume `HumanFeedback` (labels + preferences) to
+  fit a grader's thresholds/weights or train a dimensioned scorer.
+- **Curriculum / adversarial designers** can reuse `RubricResult` to score
+  *scenario quality* (realism / difficulty / value), calibrated from human
+  review of generated scenarios.
+- **Harness optimizers** can consume `feedback` as the textual signal that makes
+  reflective prompt/tool optimization sample-efficient.
+
+These are listed only to show the seam is sufficient; none are specified here.
+
 ---
 
 ## Motivation
@@ -234,8 +340,8 @@ All environments must define `self.rubric` in their constructor. The framework v
 
 | Method | Description |
 |--------|-------------|
-| `forward(action, observation) -> float` | Implement this. Can be sync or async. Compute reward. |
-| `__call__(action, observation)` | Evaluation with hooks. Auto-detects async `forward()` and awaits. |
+| `forward(action, observation) -> float \| RubricResult` | Implement this. Can be sync or async. Compute reward (optionally with feedback/dimensions; see amendment). |
+| `__call__(action, observation)` | Evaluation with hooks. Auto-detects async `forward()` and awaits. Sets `last_score` (scalar) and `last_result` (full). |
 | `register_forward_hook(fn)` | Called after `forward()`. Can be sync or async. |
 | `register_forward_pre_hook(fn)` | Called before `forward()`. Can be sync or async. |
 | `children()` / `named_children()` | Iterate immediate child rubrics. |

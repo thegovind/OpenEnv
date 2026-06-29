@@ -17,6 +17,8 @@ import inspect
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
+from openenv.core.rubrics.result import RubricOutput, reward_value
+
 
 class Rubric(ABC):
     """Abstract base class for reward computation.
@@ -43,6 +45,7 @@ class Rubric(ABC):
     _forward_hooks: List[Callable]
     _forward_pre_hooks: List[Callable]
     last_score: Optional[float]
+    last_result: Optional[RubricOutput]
 
     def __init__(self):
         # Use object.__setattr__ to avoid triggering __setattr__ during init
@@ -50,6 +53,7 @@ class Rubric(ABC):
         object.__setattr__(self, "_forward_hooks", [])
         object.__setattr__(self, "_forward_pre_hooks", [])
         object.__setattr__(self, "last_score", None)
+        object.__setattr__(self, "last_result", None)
 
     def __setattr__(self, name: str, value: Any) -> None:
         # Auto-register child rubrics when assigned as attributes
@@ -65,7 +69,10 @@ class Rubric(ABC):
             observation: The resulting observation.
 
         Returns:
-            `float`: Reward value (typically 0.0 to 1.0).
+            `float` | `RubricResult`: The rubric output. A rubric may return a
+            plain ``float`` reward (unchanged) or a `RubricResult` carrying the
+            reward plus optional feedback/dimensions. ``last_score`` always holds
+            the scalar reward and ``last_result`` the full output.
         """
         # Check if forward method is async BEFORE calling it
         if inspect.iscoroutinefunction(self.forward):
@@ -79,9 +86,14 @@ class Rubric(ABC):
             result = self.forward(action, observation)
             return self._call_sync(action, observation, result)
 
-    def _call_sync(self, action: Any, observation: Any, result: float) -> float:
+    def _call_sync(
+        self, action: Any, observation: Any, result: RubricOutput
+    ) -> RubricOutput:
         """Synchronous call path."""
-        self.last_score = result
+        # last_score stays the scalar reward (backward compatible); last_result
+        # keeps the full output so introspection can reach feedback/dimensions.
+        self.last_result = result
+        self.last_score = reward_value(result)
 
         # Post-forward hooks
         for hook in self._forward_hooks:
@@ -89,7 +101,9 @@ class Rubric(ABC):
 
         return result
 
-    async def _call_async(self, action: Any, observation: Any, result_coro) -> float:
+    async def _call_async(
+        self, action: Any, observation: Any, result_coro
+    ) -> RubricOutput:
         """Asynchronous call path."""
         # Pre-forward hooks
         for hook in self._forward_pre_hooks:
@@ -100,7 +114,8 @@ class Rubric(ABC):
 
         # Await the forward result
         result = await result_coro
-        self.last_score = result
+        self.last_result = result
+        self.last_score = reward_value(result)
 
         # Post-forward hooks
         for hook in self._forward_hooks:
@@ -112,7 +127,7 @@ class Rubric(ABC):
         return result
 
     @abstractmethod
-    def forward(self, action: Any, observation: Any) -> float:
+    def forward(self, action: Any, observation: Any) -> RubricOutput:
         """Compute the reward. Implement this in subclasses.
 
         Args:
@@ -120,7 +135,9 @@ class Rubric(ABC):
             observation: The resulting observation.
 
         Returns:
-            `float`: Reward value (typically 0.0 to 1.0).
+            `float` | `RubricResult`: Reward value (typically 0.0 to 1.0).
+            Return a plain ``float`` for a scalar reward, or a `RubricResult` to
+            also carry textual feedback, per-dimension scores, or confidence.
         """
         raise NotImplementedError
 

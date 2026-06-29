@@ -17,7 +17,13 @@ from openenv.core.rubrics.containers import (
     Sequential,
     WeightedSum,
 )
+from openenv.core.rubrics.feedback import (
+    FeedbackKind,
+    FeedbackTarget,
+    HumanFeedback,
+)
 from openenv.core.rubrics.llm_judge import LLMJudge
+from openenv.core.rubrics.result import RubricOutput, RubricResult, reward_value
 from openenv.core.rubrics.trajectory import (
     ExponentialDiscountingTrajectoryRubric,
     TrajectoryRubric,
@@ -26,6 +32,14 @@ from openenv.core.rubrics.trajectory import (
 __all__ = [
     # Base
     "Rubric",
+    # Structured results
+    "RubricResult",
+    "RubricOutput",
+    "reward_value",
+    # Human feedback
+    "HumanFeedback",
+    "FeedbackKind",
+    "FeedbackTarget",
     # Containers
     "Sequential",
     "Gate",
